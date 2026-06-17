@@ -1,7 +1,9 @@
+#include "webserv/EventLoop.hpp"
 #include "webserv/Server.hpp"
 #include <arpa/inet.h>
 #include <cerrno>
 #include <cstring>
+#include <fcntl.h>
 #include <iostream>
 #include <netinet/in.h>
 #include <stdexcept>
@@ -17,10 +19,14 @@ namespace
 		return (context + ": " + std::strerror(errno));
 	}
 
-	void closeFd(int fd)
+	void setNonBlocking(int fd)
 	{
-		if (fd >= 0)
-			close(fd);
+		const int flags = fcntl(fd, F_GETFL, 0);
+
+		if (flags < 0)
+			throw std::runtime_error(systemError("fcntl(F_GETFL)"));
+		if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0)
+			throw std::runtime_error(systemError("fcntl(F_SETFL)"));
 	}
 
 	in_addr_t addressForHost(const std::string& host)
@@ -29,7 +35,7 @@ namespace
 			return (htonl(INADDR_LOOPBACK));
 		if (host == "0.0.0.0")
 			return (htonl(INADDR_ANY));
-		throw std::runtime_error("unsupported listen host for STEP02: " + host);
+		throw std::runtime_error("unsupported listen host for STEP03: " + host);
 	}
 }
 
@@ -46,31 +52,13 @@ namespace webserv
 		closeListenSocket();
 	}
 
-	void Server::runOnce()
+	void Server::run()
 	{
-		struct sockaddr_in	clientAddress;
-		socklen_t			clientAddressLength;
-		int					clientFd;
+		EventLoop eventLoop(_listenFd);
 
-		std::memset(&clientAddress, 0, sizeof(clientAddress));
-		clientAddressLength = sizeof(clientAddress);
 		std::cout << "webserv listening on " << _host << ":" << _port
 				  << std::endl;
-		clientFd = accept(_listenFd,
-				reinterpret_cast<struct sockaddr*>(&clientAddress),
-				&clientAddressLength);
-		if (clientFd < 0)
-			throw std::runtime_error(systemError("accept"));
-		try
-		{
-			sendFixedResponse(clientFd);
-			closeFd(clientFd);
-		}
-		catch (...)
-		{
-			closeFd(clientFd);
-			throw;
-		}
+		eventLoop.run();
 	}
 
 	const std::string& Server::host() const
@@ -91,6 +79,15 @@ namespace webserv
 		_listenFd = socket(AF_INET, SOCK_STREAM, 0);
 		if (_listenFd < 0)
 			throw std::runtime_error(systemError("socket"));
+		try
+		{
+			setNonBlocking(_listenFd);
+		}
+		catch (...)
+		{
+			closeListenSocket();
+			throw;
+		}
 		reuseAddress = 1;
 		if (setsockopt(_listenFd, SOL_SOCKET, SO_REUSEADDR,
 				&reuseAddress, sizeof(reuseAddress)) < 0)
@@ -122,36 +119,6 @@ namespace webserv
 		{
 			close(_listenFd);
 			_listenFd = -1;
-		}
-	}
-
-	void Server::sendFixedResponse(int clientFd) const
-	{
-		const std::string	response =
-			"HTTP/1.1 200 OK\r\n"
-			"Content-Type: text/plain\r\n"
-			"Content-Length: 12\r\n"
-			"Connection: close\r\n"
-			"\r\n"
-			"Hello World!";
-		std::size_t			totalSent;
-
-		totalSent = 0;
-		while (totalSent < response.size())
-		{
-			const ssize_t sent = send(clientFd,
-					response.c_str() + totalSent,
-					response.size() - totalSent,
-					0);
-			if (sent < 0)
-			{
-				if (errno == EINTR)
-					continue;
-				throw std::runtime_error(systemError("send"));
-			}
-			if (sent == 0)
-				throw std::runtime_error("send: connection closed");
-			totalSent += static_cast<std::size_t>(sent);
 		}
 	}
 }

@@ -37,12 +37,12 @@ int main(int argc, char** argv)
 
 		const std::string configPath = selectConfigPath(argc, argv);
 
-		std::cout << "webserv STEP02 minimal TCP server" << std::endl;
+		std::cout << "webserv STEP03 poll event loop server" << std::endl;
 		std::cout << "config: " << configPath << std::endl;
 		std::cout << "note: config parsing starts in a later step" << std::endl;
 
 		webserv::Server server("127.0.0.1", 8080);
-		server.runOnce();
+		server.run();
 		return (0);
 	}
 	catch (const std::exception& error)

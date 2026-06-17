@@ -11,7 +11,7 @@ namespace webserv
 		Server(const std::string& host, unsigned short port);
 		~Server();
 
-		void				runOnce();
+		void				run();
 		const std::string&	host() const;
 		unsigned short		port() const;
 
@@ -25,7 +25,6 @@ namespace webserv
 
 		void	openListenSocket();
 		void	closeListenSocket();
-		void	sendFixedResponse(int clientFd) const;
 	};
 }
 
