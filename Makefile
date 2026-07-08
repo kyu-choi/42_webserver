@@ -15,11 +15,13 @@ SRCS := \
 	$(SRC_DIR)/core/Server.cpp \
 	$(SRC_DIR)/core/StateMachine.cpp \
 	$(SRC_DIR)/handlers/ErrorPageHandler.cpp \
+	$(SRC_DIR)/handlers/StaticFileHandler.cpp \
 	$(SRC_DIR)/http/Http.cpp \
 	$(SRC_DIR)/http/HttpResponse.cpp \
 	$(SRC_DIR)/http/HttpRequest.cpp \
 	$(SRC_DIR)/http/RequestParser.cpp \
 	$(SRC_DIR)/http/ResponseBuilder.cpp \
+	$(SRC_DIR)/utils/MimeTypes.cpp \
 	$(SRC_DIR)/utils/PathPolicy.cpp
 
 OBJS := $(SRCS:$(SRC_DIR)/%.cpp=$(OBJ_DIR)/%.o)

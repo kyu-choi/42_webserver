@@ -37,7 +37,7 @@ int main(int argc, char** argv)
 
 		const std::string configPath = selectConfigPath(argc, argv);
 
-		std::cout << "webserv STEP06 HTTP response builder server" << std::endl;
+		std::cout << "webserv STEP07 static file GET server" << std::endl;
 		std::cout << "config: " << configPath << std::endl;
 		std::cout << "note: config parsing starts in a later step" << std::endl;
 

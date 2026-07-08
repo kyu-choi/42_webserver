@@ -1,5 +1,6 @@
 #include "webserv/EventLoop.hpp"
 #include "webserv/ResponseBuilder.hpp"
+#include "webserv/StaticFileHandler.hpp"
 #include <cerrno>
 #include <cstring>
 #include <fcntl.h>
@@ -293,11 +294,14 @@ namespace webserv
 	{
 		if (!isImplementedMethod(client.request().method()))
 			prepareErrorResponse(client, HTTP_STATUS_NOT_IMPLEMENTED);
+		else if (client.request().method() != HTTP_METHOD_GET)
+			prepareErrorResponse(client, HTTP_STATUS_METHOD_NOT_ALLOWED);
 		else
-			client.setOutput(ResponseBuilder::text(
-					HTTP_STATUS_OK,
-					"Hello World!",
-					"text/plain").serialize());
+		{
+			const StaticFileHandler handler("./www");
+
+			client.setOutput(handler.handleGet(client.request()).serialize());
+		}
 	}
 
 	void EventLoop::prepareErrorResponse(Client& client, int statusCode)
