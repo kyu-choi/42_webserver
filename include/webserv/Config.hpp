@@ -43,14 +43,24 @@ namespace webserv
 	{
 		std::string							path;
 		std::string							root;
+		bool								rootSet;
 		std::vector<std::string>			indexes;
+		bool								indexesSet;
 		std::vector<HttpMethod>				methods;
+		bool								methodsSet;
 		bool								autoindex;
+		bool								autoindexSet;
 		bool								uploadEnabled;
+		bool								uploadSet;
 		std::string							uploadStore;
+		bool								uploadStoreSet;
 		std::map<std::string, std::string>	cgiByExtension;
 		int									redirectCode;
 		std::string							redirectTarget;
+		bool								redirectSet;
+		std::size_t							clientMaxBodySize;
+		bool								clientMaxBodySizeSet;
+		std::map<int, std::string>			errorPages;
 	};
 
 	struct ServerConfig

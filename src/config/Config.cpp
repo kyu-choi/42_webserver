@@ -70,13 +70,22 @@ namespace webserv
 
 		location.path = "/";
 		location.root = "";
+		location.rootSet = false;
 		location.indexes.push_back("index.html");
+		location.indexesSet = false;
 		location.methods.push_back(HTTP_METHOD_GET);
+		location.methodsSet = false;
 		location.autoindex = false;
+		location.autoindexSet = false;
 		location.uploadEnabled = false;
+		location.uploadSet = false;
 		location.uploadStore = "";
+		location.uploadStoreSet = false;
 		location.redirectCode = 0;
 		location.redirectTarget = "";
+		location.redirectSet = false;
+		location.clientMaxBodySize = 0;
+		location.clientMaxBodySizeSet = false;
 		return (location);
 	}
 

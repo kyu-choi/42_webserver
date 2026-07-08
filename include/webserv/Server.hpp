@@ -1,6 +1,7 @@
 #ifndef WEBSERV_SERVER_HPP
 # define WEBSERV_SERVER_HPP
 
+# include "webserv/Config.hpp"
 # include <string>
 
 namespace webserv
@@ -9,6 +10,7 @@ namespace webserv
 	{
 	public:
 		Server(const std::string& host, unsigned short port);
+		explicit Server(const ServerConfig& config);
 		~Server();
 
 		void				run();
@@ -21,6 +23,7 @@ namespace webserv
 
 		std::string		_host;
 		unsigned short	_port;
+		std::string		_root;
 		int				_listenFd;
 
 		void	openListenSocket();

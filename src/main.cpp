@@ -1,7 +1,9 @@
+#include "webserv/ConfigParser.hpp"
 #include "webserv/Server.hpp"
 #include <exception>
 #include <iostream>
 #include <string>
+#include <vector>
 
 namespace
 {
@@ -37,11 +39,20 @@ int main(int argc, char** argv)
 
 		const std::string configPath = selectConfigPath(argc, argv);
 
-		std::cout << "webserv STEP07 static file GET server" << std::endl;
+		std::cout << "webserv STEP08 config parser server" << std::endl;
 		std::cout << "config: " << configPath << std::endl;
-		std::cout << "note: config parsing starts in a later step" << std::endl;
 
-		webserv::Server server("127.0.0.1", 8080);
+		webserv::ConfigParser parser;
+		const std::vector<webserv::ServerConfig> servers =
+			parser.parseFile(configPath);
+
+		std::cout << "parsed servers: " << servers.size() << std::endl;
+		std::cout << "using listen: " << servers[0].listen[0].host
+				  << ":" << servers[0].listen[0].port << std::endl;
+		std::cout << "using root: " << servers[0].root << std::endl;
+		std::cout << "locations: " << servers[0].locations.size() << std::endl;
+
+		webserv::Server server(servers[0]);
 		server.run();
 		return (0);
 	}

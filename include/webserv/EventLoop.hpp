@@ -11,12 +11,13 @@ namespace webserv
 	class EventLoop
 	{
 	public:
-		explicit EventLoop(int listenFd);
+		EventLoop(int listenFd, const std::string& root);
 
 		void	run();
 
 	private:
 		int						_listenFd;
+		std::string				_root;
 		std::vector<pollfd>		_pollFds;
 		std::map<int, Client>	_clients;
 

@@ -39,8 +39,8 @@ namespace
 
 namespace webserv
 {
-	EventLoop::EventLoop(int listenFd)
-		: _listenFd(listenFd), _pollFds(), _clients()
+	EventLoop::EventLoop(int listenFd, const std::string& root)
+		: _listenFd(listenFd), _root(root), _pollFds(), _clients()
 	{
 		addFd(_listenFd, POLLIN);
 	}
@@ -298,7 +298,7 @@ namespace webserv
 			prepareErrorResponse(client, HTTP_STATUS_METHOD_NOT_ALLOWED);
 		else
 		{
-			const StaticFileHandler handler("./www");
+			const StaticFileHandler handler(_root);
 
 			client.setOutput(handler.handleGet(client.request()).serialize());
 		}
