@@ -32,7 +32,9 @@ namespace webserv
 		void	handleListenEvent();
 		void	handleClientRead(int fd);
 		void	handleClientWrite(int fd);
-		void	prepareFixedResponse(Client& client);
+		void	processClientInput(Client& client);
+		void	prepareSuccessResponse(Client& client);
+		void	prepareErrorResponse(Client& client, int statusCode);
 	};
 }
 

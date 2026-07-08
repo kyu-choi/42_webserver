@@ -3,6 +3,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -41,6 +42,22 @@ namespace
 			+ "Connection: close\r\n"
 			+ "\r\n"
 			+ "Hello World!");
+	}
+
+	std::string statusHttpResponse(int statusCode)
+	{
+		std::ostringstream stream;
+		const std::string body =
+			std::string(webserv::reasonPhrase(statusCode)) + "\n";
+
+		stream << "HTTP/1.1 " << statusCode << " "
+			   << webserv::reasonPhrase(statusCode) << "\r\n"
+			   << "Content-Type: text/plain\r\n"
+			   << "Content-Length: " << body.size() << "\r\n"
+			   << "Connection: close\r\n"
+			   << "\r\n"
+			   << body;
+		return (stream.str());
 	}
 }
 
@@ -222,13 +239,11 @@ namespace webserv
 		{
 			if (client->inputBuffer().size() > kMaxInputBufferSize)
 			{
-				closeClient(fd);
-				return;
+				prepareErrorResponse(*client, HTTP_STATUS_PAYLOAD_TOO_LARGE);
 			}
-			if (client->hasCompleteHeaders())
+			else
 			{
-				client->setState(CLIENT_PROCESSING_REQUEST);
-				prepareFixedResponse(*client);
+				processClientInput(*client);
 			}
 			updateEvents(fd, client->desiredPollEvents());
 		}
@@ -271,8 +286,46 @@ namespace webserv
 		closeClient(fd);
 	}
 
-	void EventLoop::prepareFixedResponse(Client& client)
+	void EventLoop::processClientInput(Client& client)
 	{
-		client.setOutput(fixedHttpResponse());
+		RequestParser::Result result;
+
+		result = client.parser().parse(client.inputBuffer(), client.request());
+		if (result == RequestParser::PARSE_INCOMPLETE)
+		{
+			if (client.parser().state() == PARSER_BODY_BY_LENGTH)
+				client.setState(CLIENT_READING_BODY);
+			else
+				client.setState(CLIENT_READING_HEADERS);
+			return;
+		}
+		client.consumeInput(client.parser().consumedBytes());
+		if (result == RequestParser::PARSE_ERROR)
+		{
+			const int status = client.parser().errorStatus();
+
+			client.request().setErrorStatus(status);
+			prepareErrorResponse(client, status);
+			client.parser().reset();
+			return;
+		}
+		client.setState(CLIENT_PROCESSING_REQUEST);
+		prepareSuccessResponse(client);
+		client.parser().reset();
+	}
+
+	void EventLoop::prepareSuccessResponse(Client& client)
+	{
+		if (!isImplementedMethod(client.request().method()))
+			prepareErrorResponse(client, HTTP_STATUS_NOT_IMPLEMENTED);
+		else
+			client.setOutput(fixedHttpResponse());
+	}
+
+	void EventLoop::prepareErrorResponse(Client& client, int statusCode)
+	{
+		if (statusCode == 0)
+			statusCode = HTTP_STATUS_BAD_REQUEST;
+		client.setOutput(statusHttpResponse(statusCode));
 	}
 }

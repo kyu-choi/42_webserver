@@ -9,6 +9,8 @@ namespace webserv
 		  _inputBuffer(),
 		  _outputBuffer(),
 		  _sendOffset(0),
+		  _request(),
+		  _parser(),
 		  _state(CLIENT_READING_HEADERS),
 		  _lastActivity(std::time(0)),
 		  _closing(false)
@@ -50,15 +52,39 @@ namespace webserv
 		return (_sendOffset);
 	}
 
+	HttpRequest& Client::request()
+	{
+		return (_request);
+	}
+
+	const HttpRequest& Client::request() const
+	{
+		return (_request);
+	}
+
+	RequestParser& Client::parser()
+	{
+		return (_parser);
+	}
+
+	const RequestParser& Client::parser() const
+	{
+		return (_parser);
+	}
+
 	void Client::appendInput(const char* data, std::size_t size)
 	{
 		_inputBuffer.append(data, size);
 		touch();
 	}
 
-	bool Client::hasCompleteHeaders() const
+	void Client::consumeInput(std::size_t size)
 	{
-		return (_inputBuffer.find("\r\n\r\n") != std::string::npos);
+		if (size >= _inputBuffer.size())
+			_inputBuffer.clear();
+		else
+			_inputBuffer.erase(0, size);
+		touch();
 	}
 
 	bool Client::hasPendingOutput() const
