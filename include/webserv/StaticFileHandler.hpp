@@ -16,7 +16,9 @@ namespace webserv
 		HttpResponse	handleGet(const HttpRequest& request) const;
 		HttpResponse	handlePath(
 							const std::string& path,
-							const std::vector<std::string>& indexes) const;
+							const std::vector<std::string>& indexes,
+							bool autoindex,
+							const std::string& uriPath) const;
 
 	private:
 		std::string	_root;
@@ -24,7 +26,12 @@ namespace webserv
 		HttpResponse	buildFileResponse(const std::string& path) const;
 		HttpResponse	buildDirectoryResponse(
 							const std::string& path,
-							const std::vector<std::string>& indexes) const;
+							const std::vector<std::string>& indexes,
+							bool autoindex,
+							const std::string& uriPath) const;
+		HttpResponse	buildAutoindexResponse(
+							const std::string& path,
+							const std::string& uriPath) const;
 	};
 }
 

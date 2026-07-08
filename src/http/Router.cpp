@@ -102,6 +102,13 @@ namespace
 		effective.cgiByExtension = location->cgiByExtension;
 		return (effective);
 	}
+
+	bool requestPathEndsWithSlash(const webserv::HttpRequest& request)
+	{
+		const std::string rawPath = webserv::stripQueryString(request.rawTarget());
+
+		return (rawPath.size() > 1 && rawPath[rawPath.size() - 1] == '/');
+	}
 }
 
 namespace webserv
@@ -141,6 +148,7 @@ namespace webserv
 		PathResolution filesystemResolution;
 		const LocationConfig* location;
 		std::string locationPrefix;
+		std::string filesystemPrefix;
 		RouteResult result;
 
 		uriResolution = resolveUriPath(request.rawTarget(), "/", "");
@@ -151,10 +159,13 @@ namespace webserv
 			locationPrefix = "/";
 		else
 			locationPrefix = location->path;
+		filesystemPrefix = "/";
+		if (location != 0 && location->rootSet)
+			filesystemPrefix = locationPrefix;
 		result.effective = buildEffectiveConfig(server, location);
 		filesystemResolution = resolveUriPath(
 				request.rawTarget(),
-				locationPrefix,
+				filesystemPrefix,
 				result.effective.root);
 		if (!filesystemResolution.ok)
 			return (makeRouteError(
@@ -162,6 +173,9 @@ namespace webserv
 		result.ok = true;
 		result.statusCode = HTTP_STATUS_OK;
 		result.uriPath = filesystemResolution.uriPath;
+		if (requestPathEndsWithSlash(request)
+			&& result.uriPath[result.uriPath.size() - 1] != '/')
+			result.uriPath += "/";
 		result.queryString = request.query();
 		result.locationPrefix = locationPrefix;
 		result.relativePath = filesystemResolution.relativePath;

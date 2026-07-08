@@ -435,7 +435,9 @@ namespace webserv
 
 			response = handler.handlePath(
 				route.filesystemPath,
-				route.effective.indexes);
+				route.effective.indexes,
+				route.effective.autoindex,
+				route.uriPath);
 			if (isErrorStatusCode(response.statusCode()))
 			{
 				prepareErrorResponse(
