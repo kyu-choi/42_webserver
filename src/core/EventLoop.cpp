@@ -1,9 +1,9 @@
 #include "webserv/EventLoop.hpp"
+#include "webserv/ResponseBuilder.hpp"
 #include <cerrno>
 #include <cstring>
 #include <fcntl.h>
 #include <iostream>
-#include <sstream>
 #include <stdexcept>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -34,31 +34,6 @@ namespace
 			throw std::runtime_error(systemError("fcntl(F_SETFL)"));
 	}
 
-	std::string fixedHttpResponse()
-	{
-		return (std::string("HTTP/1.1 200 OK\r\n")
-			+ "Content-Type: text/plain\r\n"
-			+ "Content-Length: 12\r\n"
-			+ "Connection: close\r\n"
-			+ "\r\n"
-			+ "Hello World!");
-	}
-
-	std::string statusHttpResponse(int statusCode)
-	{
-		std::ostringstream stream;
-		const std::string body =
-			std::string(webserv::reasonPhrase(statusCode)) + "\n";
-
-		stream << "HTTP/1.1 " << statusCode << " "
-			   << webserv::reasonPhrase(statusCode) << "\r\n"
-			   << "Content-Type: text/plain\r\n"
-			   << "Content-Length: " << body.size() << "\r\n"
-			   << "Connection: close\r\n"
-			   << "\r\n"
-			   << body;
-		return (stream.str());
-	}
 }
 
 namespace webserv
@@ -319,13 +294,16 @@ namespace webserv
 		if (!isImplementedMethod(client.request().method()))
 			prepareErrorResponse(client, HTTP_STATUS_NOT_IMPLEMENTED);
 		else
-			client.setOutput(fixedHttpResponse());
+			client.setOutput(ResponseBuilder::text(
+					HTTP_STATUS_OK,
+					"Hello World!",
+					"text/plain").serialize());
 	}
 
 	void EventLoop::prepareErrorResponse(Client& client, int statusCode)
 	{
 		if (statusCode == 0)
 			statusCode = HTTP_STATUS_BAD_REQUEST;
-		client.setOutput(statusHttpResponse(statusCode));
+		client.setOutput(ResponseBuilder::error(statusCode).serialize());
 	}
 }
