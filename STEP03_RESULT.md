@@ -8,14 +8,16 @@
 
 ## 생성/수정한 파일
 
-| 경로 | 구현 내용 |
-|---|---|
-| `include/webserv/EventLoop.hpp` | `pollfd` 목록과 client map을 관리하는 `EventLoop` 클래스 선언 |
-| `src/core/EventLoop.cpp` | `poll()`, non-blocking `accept`, readiness 기반 `recv`/`send`, fd 제거 구현 |
-| `include/webserv/Server.hpp` | `runOnce()`를 `run()`으로 변경하고 fixed response 전송 책임 제거 |
-| `src/core/Server.cpp` | listen fd를 non-blocking으로 설정하고 `EventLoop` 실행으로 변경 |
-| `src/main.cpp` | STEP03 서버 메시지 출력 후 `server.run()` 호출 |
-| `Makefile` | `src/core/EventLoop.cpp`를 빌드 대상에 추가 |
+
+| 경로                              | 구현 내용                                                                 |
+| ------------------------------- | --------------------------------------------------------------------- |
+| `include/webserv/EventLoop.hpp` | `pollfd` 목록과 client map을 관리하는 `EventLoop` 클래스 선언                      |
+| `src/core/EventLoop.cpp`        | `poll()`, non-blocking `accept`, readiness 기반 `recv`/`send`, fd 제거 구현 |
+| `include/webserv/Server.hpp`    | `runOnce()`를 `run()`으로 변경하고 fixed response 전송 책임 제거                   |
+| `src/core/Server.cpp`           | listen fd를 non-blocking으로 설정하고 `EventLoop` 실행으로 변경                    |
+| `src/main.cpp`                  | STEP03 서버 메시지 출력 후 `server.run()` 호출                                  |
+| `Makefile`                      | `src/core/EventLoop.cpp`를 빌드 대상에 추가                                   |
+
 
 ## EventLoop 구현 내용
 

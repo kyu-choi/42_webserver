@@ -1,9 +1,9 @@
 #ifndef WEBSERV_EVENT_LOOP_HPP
 # define WEBSERV_EVENT_LOOP_HPP
 
+# include "webserv/Client.hpp"
 # include <map>
 # include <poll.h>
-# include <string>
 # include <vector>
 
 namespace webserv
@@ -16,16 +16,6 @@ namespace webserv
 		void	run();
 
 	private:
-		struct Client
-		{
-			std::string	requestBuffer;
-			std::string	responseBuffer;
-			std::size_t	bytesSent;
-			bool		responseReady;
-
-			Client();
-		};
-
 		int						_listenFd;
 		std::vector<pollfd>		_pollFds;
 		std::map<int, Client>	_clients;
@@ -42,6 +32,7 @@ namespace webserv
 		void	handleListenEvent();
 		void	handleClientRead(int fd);
 		void	handleClientWrite(int fd);
+		void	prepareFixedResponse(Client& client);
 	};
 }
 

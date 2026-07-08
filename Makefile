@@ -10,6 +10,7 @@ OBJ_DIR := build
 SRCS := \
 	$(SRC_DIR)/main.cpp \
 	$(SRC_DIR)/config/Config.cpp \
+	$(SRC_DIR)/core/Client.cpp \
 	$(SRC_DIR)/core/EventLoop.cpp \
 	$(SRC_DIR)/core/Server.cpp \
 	$(SRC_DIR)/core/StateMachine.cpp \

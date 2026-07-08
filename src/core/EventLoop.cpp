@@ -10,6 +10,7 @@
 namespace
 {
 	const std::size_t kBufferSize = 4096;
+	const std::size_t kMaxInputBufferSize = 1024 * 1024;
 
 	std::string systemError(const std::string& context)
 	{
@@ -45,11 +46,6 @@ namespace
 
 namespace webserv
 {
-	EventLoop::Client::Client()
-		: requestBuffer(), responseBuffer(), bytesSent(0), responseReady(false)
-	{
-	}
-
 	EventLoop::EventLoop(int listenFd)
 		: _listenFd(listenFd), _pollFds(), _clients()
 	{
@@ -175,7 +171,8 @@ namespace webserv
 			try
 			{
 				setNonBlocking(clientFd);
-				_clients[clientFd] = Client();
+				_clients.insert(std::make_pair(clientFd,
+						Client(clientFd, _listenFd)));
 				addFd(clientFd, POLLIN);
 				std::cout << "accepted client fd " << clientFd << std::endl;
 			}
@@ -189,9 +186,15 @@ namespace webserv
 
 	void EventLoop::handleClientRead(int fd)
 	{
-		char	buffer[kBufferSize];
-		bool	receivedAny;
+		std::map<int, Client>::iterator	it;
+		Client*							client;
+		char							buffer[kBufferSize];
+		bool							receivedAny;
 
+		it = _clients.find(fd);
+		if (it == _clients.end())
+			return;
+		client = &it->second;
 		receivedAny = false;
 		while (true)
 		{
@@ -199,8 +202,7 @@ namespace webserv
 
 			if (received > 0)
 			{
-				_clients[fd].requestBuffer.append(buffer,
-					static_cast<std::size_t>(received));
+				client->appendInput(buffer, static_cast<std::size_t>(received));
 				receivedAny = true;
 				continue;
 			}
@@ -218,31 +220,42 @@ namespace webserv
 		}
 		if (receivedAny)
 		{
-			_clients[fd].responseBuffer = fixedHttpResponse();
-			_clients[fd].bytesSent = 0;
-			_clients[fd].responseReady = true;
-			updateEvents(fd, POLLOUT);
+			if (client->inputBuffer().size() > kMaxInputBufferSize)
+			{
+				closeClient(fd);
+				return;
+			}
+			if (client->hasCompleteHeaders())
+			{
+				client->setState(CLIENT_PROCESSING_REQUEST);
+				prepareFixedResponse(*client);
+			}
+			updateEvents(fd, client->desiredPollEvents());
 		}
 	}
 
 	void EventLoop::handleClientWrite(int fd)
 	{
-		Client& client = _clients[fd];
+		std::map<int, Client>::iterator it = _clients.find(fd);
 
-		if (!client.responseReady)
+		if (it == _clients.end())
+			return;
+		Client& client = it->second;
+
+		if (!client.hasPendingOutput())
 		{
-			updateEvents(fd, POLLIN);
+			updateEvents(fd, client.desiredPollEvents());
 			return;
 		}
-		while (client.bytesSent < client.responseBuffer.size())
+		while (client.hasPendingOutput())
 		{
 			const ssize_t sent = send(fd,
-					client.responseBuffer.c_str() + client.bytesSent,
-					client.responseBuffer.size() - client.bytesSent,
+					client.pendingOutputData(),
+					client.pendingOutputSize(),
 					0);
 			if (sent > 0)
 			{
-				client.bytesSent += static_cast<std::size_t>(sent);
+				client.advanceSendOffset(static_cast<std::size_t>(sent));
 				continue;
 			}
 			if (sent == 0)
@@ -254,6 +267,12 @@ namespace webserv
 			closeClient(fd);
 			return;
 		}
+		client.markClosing();
 		closeClient(fd);
+	}
+
+	void EventLoop::prepareFixedResponse(Client& client)
+	{
+		client.setOutput(fixedHttpResponse());
 	}
 }

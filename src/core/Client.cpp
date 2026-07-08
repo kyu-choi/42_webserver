@@ -1,0 +1,128 @@
+#include "webserv/Client.hpp"
+#include <poll.h>
+
+namespace webserv
+{
+	Client::Client(int fd, int listenFd)
+		: _fd(fd),
+		  _listenFd(listenFd),
+		  _inputBuffer(),
+		  _outputBuffer(),
+		  _sendOffset(0),
+		  _state(CLIENT_READING_HEADERS),
+		  _lastActivity(std::time(0)),
+		  _closing(false)
+	{
+	}
+
+	int Client::fd() const
+	{
+		return (_fd);
+	}
+
+	int Client::listenFd() const
+	{
+		return (_listenFd);
+	}
+
+	ClientState Client::state() const
+	{
+		return (_state);
+	}
+
+	std::time_t Client::lastActivity() const
+	{
+		return (_lastActivity);
+	}
+
+	const std::string& Client::inputBuffer() const
+	{
+		return (_inputBuffer);
+	}
+
+	const std::string& Client::outputBuffer() const
+	{
+		return (_outputBuffer);
+	}
+
+	std::size_t Client::sendOffset() const
+	{
+		return (_sendOffset);
+	}
+
+	void Client::appendInput(const char* data, std::size_t size)
+	{
+		_inputBuffer.append(data, size);
+		touch();
+	}
+
+	bool Client::hasCompleteHeaders() const
+	{
+		return (_inputBuffer.find("\r\n\r\n") != std::string::npos);
+	}
+
+	bool Client::hasPendingOutput() const
+	{
+		return (_sendOffset < _outputBuffer.size());
+	}
+
+	std::size_t Client::pendingOutputSize() const
+	{
+		return (_outputBuffer.size() - _sendOffset);
+	}
+
+	const char* Client::pendingOutputData() const
+	{
+		return (_outputBuffer.c_str() + _sendOffset);
+	}
+
+	void Client::setOutput(const std::string& response)
+	{
+		_outputBuffer = response;
+		_sendOffset = 0;
+		_state = CLIENT_WRITING_RESPONSE;
+		touch();
+	}
+
+	void Client::advanceSendOffset(std::size_t sentBytes)
+	{
+		_sendOffset += sentBytes;
+		if (_sendOffset > _outputBuffer.size())
+			_sendOffset = _outputBuffer.size();
+		touch();
+	}
+
+	bool Client::outputComplete() const
+	{
+		return (_sendOffset >= _outputBuffer.size());
+	}
+
+	void Client::setState(ClientState state)
+	{
+		_state = state;
+		touch();
+	}
+
+	void Client::markClosing()
+	{
+		_closing = true;
+		_state = CLIENT_CLOSING;
+		touch();
+	}
+
+	void Client::touch()
+	{
+		_lastActivity = std::time(0);
+	}
+
+	short Client::desiredPollEvents() const
+	{
+		if (_closing || _state == CLIENT_CLOSING)
+			return (0);
+		if (clientStateCanRead(_state))
+			return (POLLIN);
+		if (clientStateCanWrite(_state) && hasPendingOutput())
+			return (POLLOUT);
+		return (0);
+	}
+}
