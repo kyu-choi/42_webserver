@@ -4,6 +4,7 @@
 # include "webserv/HttpRequest.hpp"
 # include "webserv/HttpResponse.hpp"
 # include <string>
+# include <vector>
 
 namespace webserv
 {
@@ -13,11 +14,17 @@ namespace webserv
 		explicit StaticFileHandler(const std::string& root);
 
 		HttpResponse	handleGet(const HttpRequest& request) const;
+		HttpResponse	handlePath(
+							const std::string& path,
+							const std::vector<std::string>& indexes) const;
 
 	private:
 		std::string	_root;
 
 		HttpResponse	buildFileResponse(const std::string& path) const;
+		HttpResponse	buildDirectoryResponse(
+							const std::string& path,
+							const std::vector<std::string>& indexes) const;
 	};
 }
 

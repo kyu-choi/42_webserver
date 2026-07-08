@@ -22,6 +22,7 @@ SRCS := \
 	$(SRC_DIR)/http/HttpRequest.cpp \
 	$(SRC_DIR)/http/RequestParser.cpp \
 	$(SRC_DIR)/http/ResponseBuilder.cpp \
+	$(SRC_DIR)/http/Router.cpp \
 	$(SRC_DIR)/utils/MimeTypes.cpp \
 	$(SRC_DIR)/utils/PathPolicy.cpp
 

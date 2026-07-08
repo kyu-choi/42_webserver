@@ -39,7 +39,7 @@ int main(int argc, char** argv)
 
 		const std::string configPath = selectConfigPath(argc, argv);
 
-		std::cout << "webserv STEP08 config parser server" << std::endl;
+		std::cout << "webserv STEP09 multi-listen router server" << std::endl;
 		std::cout << "config: " << configPath << std::endl;
 
 		webserv::ConfigParser parser;
@@ -47,12 +47,16 @@ int main(int argc, char** argv)
 			parser.parseFile(configPath);
 
 		std::cout << "parsed servers: " << servers.size() << std::endl;
-		std::cout << "using listen: " << servers[0].listen[0].host
-				  << ":" << servers[0].listen[0].port << std::endl;
-		std::cout << "using root: " << servers[0].root << std::endl;
-		std::cout << "locations: " << servers[0].locations.size() << std::endl;
+		for (std::size_t i = 0; i < servers.size(); ++i)
+		{
+			std::cout << "server[" << i << "] root: "
+					  << servers[i].root << ", locations: "
+					  << servers[i].locations.size() << std::endl;
+		}
 
-		webserv::Server server(servers[0]);
+		webserv::Server server(servers);
+		std::cout << "listen sockets: " << server.listenSocketCount()
+				  << std::endl;
 		server.run();
 		return (0);
 	}

@@ -7,6 +7,7 @@
 #include <fcntl.h>
 #include <iostream>
 #include <netinet/in.h>
+#include <sstream>
 #include <stdexcept>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -19,6 +20,12 @@ namespace
 	std::string systemError(const std::string& context)
 	{
 		return (context + ": " + std::strerror(errno));
+	}
+
+	void closeFd(int fd)
+	{
+		if (fd >= 0)
+			close(fd);
 	}
 
 	void setNonBlocking(int fd)
@@ -59,98 +66,186 @@ namespace
 			| (parts[2] << 8)
 			| parts[3]));
 	}
+
+	std::string endpointKey(const webserv::ListenEndpoint& endpoint)
+	{
+		std::ostringstream stream;
+
+		stream << endpoint.host << ":" << endpoint.port;
+		return (stream.str());
+	}
 }
 
 namespace webserv
 {
-	Server::Server(const std::string& host, unsigned short port)
-		: _host(host), _port(port), _root("./www"), _listenFd(-1)
+	Server::ListenBinding::ListenBinding(
+		int fdValue,
+		std::size_t serverIndexValue,
+		std::size_t listenIndexValue)
+		: fd(fdValue),
+		  serverIndex(serverIndexValue),
+		  listenIndex(listenIndexValue)
 	{
-		openListenSocket();
+	}
+
+	Server::Server(const std::string& host, unsigned short port)
+		: _servers(), _listenBindings()
+	{
+		ServerConfig server = defaultServerConfig();
+		ListenEndpoint endpoint;
+
+		endpoint.host = host;
+		endpoint.port = port;
+		server.listen.clear();
+		server.listen.push_back(endpoint);
+		_servers.push_back(server);
+		openListenSockets();
 	}
 
 	Server::Server(const ServerConfig& config)
-		: _host("127.0.0.1"), _port(8080), _root(config.root), _listenFd(-1)
+		: _servers(), _listenBindings()
 	{
-		if (config.listen.empty())
-			throw std::runtime_error("config: server has no listen endpoint");
-		_host = config.listen[0].host;
-		_port = config.listen[0].port;
-		openListenSocket();
+		_servers.push_back(config);
+		openListenSockets();
+	}
+
+	Server::Server(const std::vector<ServerConfig>& configs)
+		: _servers(configs), _listenBindings()
+	{
+		openListenSockets();
 	}
 
 	Server::~Server()
 	{
-		closeListenSocket();
+		closeListenSockets();
 	}
 
 	void Server::run()
 	{
-		EventLoop eventLoop(_listenFd, _root);
+		std::vector<ListenSocketConfig> listeners;
 
-		std::cout << "webserv listening on " << _host << ":" << _port
-				  << std::endl;
+		for (std::size_t i = 0; i < _listenBindings.size(); ++i)
+		{
+			listeners.push_back(ListenSocketConfig(
+					_listenBindings[i].fd,
+					_servers[_listenBindings[i].serverIndex]));
+			std::cout << "webserv listening on "
+					  << _servers[_listenBindings[i].serverIndex]
+							.listen[_listenBindings[i].listenIndex].host
+					  << ":" << _servers[_listenBindings[i].serverIndex]
+							.listen[_listenBindings[i].listenIndex].port
+					  << " (fd " << _listenBindings[i].fd << ")"
+					  << std::endl;
+		}
+		EventLoop eventLoop(listeners);
+
 		eventLoop.run();
 	}
 
 	const std::string& Server::host() const
 	{
-		return (_host);
+		return (_servers[0].listen[0].host);
 	}
 
 	unsigned short Server::port() const
 	{
-		return (_port);
+		return (_servers[0].listen[0].port);
 	}
 
-	void Server::openListenSocket()
+	std::size_t Server::listenSocketCount() const
 	{
-		struct sockaddr_in	address;
-		int					reuseAddress;
+		return (_listenBindings.size());
+	}
 
-		_listenFd = socket(AF_INET, SOCK_STREAM, 0);
-		if (_listenFd < 0)
-			throw std::runtime_error(systemError("socket"));
+	void Server::openListenSockets()
+	{
+		std::vector<std::string> seenEndpoints;
+
+		if (_servers.empty())
+			throw std::runtime_error("config: no server block found");
 		try
 		{
-			setNonBlocking(_listenFd);
+			for (std::size_t serverIndex = 0;
+				serverIndex < _servers.size(); ++serverIndex)
+			{
+				const ServerConfig& server = _servers[serverIndex];
+
+				if (server.listen.empty())
+					throw std::runtime_error("config: server has no listen endpoint");
+				for (std::size_t listenIndex = 0;
+					listenIndex < server.listen.size(); ++listenIndex)
+				{
+					const std::string key = endpointKey(server.listen[listenIndex]);
+
+					for (std::size_t i = 0; i < seenEndpoints.size(); ++i)
+					{
+						if (seenEndpoints[i] == key)
+							throw std::runtime_error(
+								"config: duplicate listen endpoint: " + key);
+					}
+					seenEndpoints.push_back(key);
+					_listenBindings.push_back(ListenBinding(
+							createListenSocket(server.listen[listenIndex]),
+							serverIndex,
+							listenIndex));
+				}
+			}
 		}
 		catch (...)
 		{
-			closeListenSocket();
+			closeListenSockets();
+			throw;
+		}
+	}
+
+	int Server::createListenSocket(const ListenEndpoint& endpoint)
+	{
+		struct sockaddr_in	address;
+		int					reuseAddress;
+		int					listenFd;
+
+		listenFd = socket(AF_INET, SOCK_STREAM, 0);
+		if (listenFd < 0)
+			throw std::runtime_error(systemError("socket"));
+		try
+		{
+			setNonBlocking(listenFd);
+		}
+		catch (...)
+		{
+			closeFd(listenFd);
 			throw;
 		}
 		reuseAddress = 1;
-		if (setsockopt(_listenFd, SOL_SOCKET, SO_REUSEADDR,
+		if (setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR,
 				&reuseAddress, sizeof(reuseAddress)) < 0)
 		{
-			closeListenSocket();
+			closeFd(listenFd);
 			throw std::runtime_error(systemError("setsockopt"));
 		}
 		std::memset(&address, 0, sizeof(address));
 		address.sin_family = AF_INET;
-		address.sin_port = htons(_port);
-		address.sin_addr.s_addr = addressForHost(_host);
-		if (bind(_listenFd,
+		address.sin_port = htons(endpoint.port);
+		address.sin_addr.s_addr = addressForHost(endpoint.host);
+		if (bind(listenFd,
 				reinterpret_cast<struct sockaddr*>(&address),
 				sizeof(address)) < 0)
 		{
-			closeListenSocket();
+			closeFd(listenFd);
 			throw std::runtime_error(systemError("bind"));
 		}
-		if (listen(_listenFd, kListenBacklog) < 0)
+		if (listen(listenFd, kListenBacklog) < 0)
 		{
-			closeListenSocket();
+			closeFd(listenFd);
 			throw std::runtime_error(systemError("listen"));
 		}
+		return (listenFd);
 	}
 
-	void Server::closeListenSocket()
+	void Server::closeListenSockets()
 	{
-		if (_listenFd >= 0)
-		{
-			close(_listenFd);
-			_listenFd = -1;
-		}
+		for (std::size_t i = 0; i < _listenBindings.size(); ++i)
+			closeFd(_listenBindings[i].fd);
+		_listenBindings.clear();
 	}
 }

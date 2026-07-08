@@ -2,24 +2,32 @@
 # define WEBSERV_EVENT_LOOP_HPP
 
 # include "webserv/Client.hpp"
+# include "webserv/Config.hpp"
 # include <map>
 # include <poll.h>
 # include <vector>
 
 namespace webserv
 {
+	struct ListenSocketConfig
+	{
+		int				fd;
+		ServerConfig	server;
+
+		ListenSocketConfig(int fdValue, const ServerConfig& serverValue);
+	};
+
 	class EventLoop
 	{
 	public:
-		EventLoop(int listenFd, const std::string& root);
+		explicit EventLoop(const std::vector<ListenSocketConfig>& listeners);
 
 		void	run();
 
 	private:
-		int						_listenFd;
-		std::string				_root;
-		std::vector<pollfd>		_pollFds;
-		std::map<int, Client>	_clients;
+		std::vector<pollfd>				_pollFds;
+		std::map<int, Client>			_clients;
+		std::map<int, ServerConfig>		_serversByListenFd;
 
 		EventLoop(const EventLoop& other);
 		EventLoop&	operator=(const EventLoop& other);
@@ -30,12 +38,13 @@ namespace webserv
 		bool	isListenFd(int fd) const;
 		void	closeClient(int fd);
 
-		void	handleListenEvent();
+		void	handleListenEvent(int listenFd);
 		void	handleClientRead(int fd);
 		void	handleClientWrite(int fd);
 		void	processClientInput(Client& client);
 		void	prepareSuccessResponse(Client& client);
 		void	prepareErrorResponse(Client& client, int statusCode);
+		const ServerConfig*	serverForClient(const Client& client) const;
 	};
 }
 

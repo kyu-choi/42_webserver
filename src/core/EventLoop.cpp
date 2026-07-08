@@ -1,5 +1,6 @@
 #include "webserv/EventLoop.hpp"
 #include "webserv/ResponseBuilder.hpp"
+#include "webserv/Router.hpp"
 #include "webserv/StaticFileHandler.hpp"
 #include <cerrno>
 #include <cstring>
@@ -35,14 +36,48 @@ namespace
 			throw std::runtime_error(systemError("fcntl(F_SETFL)"));
 	}
 
+	bool methodAllowed(
+		webserv::HttpMethod method,
+		const std::vector<webserv::HttpMethod>& allowedMethods)
+	{
+		for (std::size_t i = 0; i < allowedMethods.size(); ++i)
+		{
+			if (allowedMethods[i] == method)
+				return (true);
+		}
+		return (false);
+	}
+
+	std::vector<std::string> methodNames(
+		const std::vector<webserv::HttpMethod>& methods)
+	{
+		std::vector<std::string> names;
+
+		for (std::size_t i = 0; i < methods.size(); ++i)
+			names.push_back(webserv::httpMethodName(methods[i]));
+		return (names);
+	}
 }
 
 namespace webserv
 {
-	EventLoop::EventLoop(int listenFd, const std::string& root)
-		: _listenFd(listenFd), _root(root), _pollFds(), _clients()
+	ListenSocketConfig::ListenSocketConfig(
+		int fdValue,
+		const ServerConfig& serverValue)
+		: fd(fdValue), server(serverValue)
 	{
-		addFd(_listenFd, POLLIN);
+	}
+
+	EventLoop::EventLoop(const std::vector<ListenSocketConfig>& listeners)
+		: _pollFds(), _clients(), _serversByListenFd()
+	{
+		if (listeners.empty())
+			throw std::runtime_error("event loop: no listen sockets");
+		for (std::size_t i = 0; i < listeners.size(); ++i)
+		{
+			_serversByListenFd[listeners[i].fd] = listeners[i].server;
+			addFd(listeners[i].fd, POLLIN);
+		}
 	}
 
 	void EventLoop::run()
@@ -78,7 +113,7 @@ namespace webserv
 					if ((events & (POLLERR | POLLHUP | POLLNVAL)) != 0)
 						throw std::runtime_error("listen socket poll error");
 					if ((events & POLLIN) != 0)
-						handleListenEvent();
+						handleListenEvent(fd);
 				}
 				else
 				{
@@ -137,7 +172,7 @@ namespace webserv
 
 	bool EventLoop::isListenFd(int fd) const
 	{
-		return (fd == _listenFd);
+		return (_serversByListenFd.find(fd) != _serversByListenFd.end());
 	}
 
 	void EventLoop::closeClient(int fd)
@@ -147,11 +182,11 @@ namespace webserv
 		closeFd(fd);
 	}
 
-	void EventLoop::handleListenEvent()
+	void EventLoop::handleListenEvent(int listenFd)
 	{
 		while (true)
 		{
-			int clientFd = accept(_listenFd, 0, 0);
+			int clientFd = accept(listenFd, 0, 0);
 
 			if (clientFd < 0)
 			{
@@ -165,9 +200,10 @@ namespace webserv
 			{
 				setNonBlocking(clientFd);
 				_clients.insert(std::make_pair(clientFd,
-						Client(clientFd, _listenFd)));
+						Client(clientFd, listenFd)));
 				addFd(clientFd, POLLIN);
-				std::cout << "accepted client fd " << clientFd << std::endl;
+				std::cout << "accepted client fd " << clientFd
+						  << " from listen fd " << listenFd << std::endl;
 			}
 			catch (...)
 			{
@@ -292,15 +328,51 @@ namespace webserv
 
 	void EventLoop::prepareSuccessResponse(Client& client)
 	{
+		const ServerConfig* server;
+		RouteResult route;
+
 		if (!isImplementedMethod(client.request().method()))
+		{
 			prepareErrorResponse(client, HTTP_STATUS_NOT_IMPLEMENTED);
-		else if (client.request().method() != HTTP_METHOD_GET)
-			prepareErrorResponse(client, HTTP_STATUS_METHOD_NOT_ALLOWED);
+			return;
+		}
+		server = serverForClient(client);
+		if (server == 0)
+		{
+			prepareErrorResponse(client, HTTP_STATUS_INTERNAL_SERVER_ERROR);
+			return;
+		}
 		else
 		{
-			const StaticFileHandler handler(_root);
+			route = Router::route(client.request(), *server);
+			if (!route.ok)
+				prepareErrorResponse(client, route.statusCode);
+			else if (route.effective.redirectCode != 0)
+			{
+				client.setOutput(ResponseBuilder::redirect(
+						route.effective.redirectCode,
+						route.effective.redirectTarget).serialize());
+			}
+			else if (!methodAllowed(
+					client.request().method(),
+					route.effective.methods))
+			{
+				client.setOutput(ResponseBuilder::methodNotAllowed(
+						methodNames(route.effective.methods)).serialize());
+			}
+			else if (client.request().method() != HTTP_METHOD_GET)
+			{
+				client.setOutput(ResponseBuilder::methodNotAllowed(
+						methodNames(route.effective.methods)).serialize());
+			}
+			else
+			{
+				const StaticFileHandler handler(route.effective.root);
 
-			client.setOutput(handler.handleGet(client.request()).serialize());
+				client.setOutput(handler.handlePath(
+						route.filesystemPath,
+						route.effective.indexes).serialize());
+			}
 		}
 	}
 
@@ -309,5 +381,15 @@ namespace webserv
 		if (statusCode == 0)
 			statusCode = HTTP_STATUS_BAD_REQUEST;
 		client.setOutput(ResponseBuilder::error(statusCode).serialize());
+	}
+
+	const ServerConfig* EventLoop::serverForClient(const Client& client) const
+	{
+		std::map<int, ServerConfig>::const_iterator it;
+
+		it = _serversByListenFd.find(client.listenFd());
+		if (it == _serversByListenFd.end())
+			return (0);
+		return (&it->second);
 	}
 }

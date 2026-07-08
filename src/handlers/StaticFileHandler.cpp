@@ -20,6 +20,13 @@ namespace
 	{
 		return (S_ISREG(mode));
 	}
+
+	std::string joinPath(const std::string& directory, const std::string& child)
+	{
+		if (directory.empty() || directory[directory.size() - 1] == '/')
+			return (directory + child);
+		return (directory + "/" + child);
+	}
 }
 
 namespace webserv
@@ -32,6 +39,7 @@ namespace webserv
 	HttpResponse StaticFileHandler::handleGet(const HttpRequest& request) const
 	{
 		PathResolution resolved;
+		std::vector<std::string> indexes;
 
 		if (request.method() != HTTP_METHOD_GET)
 			return (ResponseBuilder::error(HTTP_STATUS_METHOD_NOT_ALLOWED));
@@ -45,9 +53,21 @@ namespace webserv
 				return (ResponseBuilder::error(HTTP_STATUS_BAD_REQUEST));
 			return (ResponseBuilder::error(HTTP_STATUS_NOT_FOUND));
 		}
-		if (resolved.uriPath == "/")
-			resolved.filesystemPath = _root + "/index.html";
-		return (buildFileResponse(resolved.filesystemPath));
+		indexes.push_back("index.html");
+		return (handlePath(resolved.filesystemPath, indexes));
+	}
+
+	HttpResponse StaticFileHandler::handlePath(
+		const std::string& path,
+		const std::vector<std::string>& indexes) const
+	{
+		struct stat info;
+
+		if (stat(path.c_str(), &info) != 0)
+			return (ResponseBuilder::error(HTTP_STATUS_NOT_FOUND));
+		if (isDirectoryMode(info.st_mode))
+			return (buildDirectoryResponse(path, indexes));
+		return (buildFileResponse(path));
 	}
 
 	HttpResponse StaticFileHandler::buildFileResponse(const std::string& path) const
@@ -93,5 +113,21 @@ namespace webserv
 				HTTP_STATUS_OK,
 				body,
 				mimeTypeForPath(path)));
+	}
+
+	HttpResponse StaticFileHandler::buildDirectoryResponse(
+		const std::string& path,
+		const std::vector<std::string>& indexes) const
+	{
+		struct stat info;
+
+		for (std::size_t i = 0; i < indexes.size(); ++i)
+		{
+			const std::string candidate = joinPath(path, indexes[i]);
+
+			if (stat(candidate.c_str(), &info) == 0)
+				return (buildFileResponse(candidate));
+		}
+		return (ResponseBuilder::error(HTTP_STATUS_FORBIDDEN));
 	}
 }
