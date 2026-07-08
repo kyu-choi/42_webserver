@@ -15,6 +15,10 @@ namespace webserv
 								const std::string& body,
 								const std::string& contentType);
 		static HttpResponse	error(int statusCode);
+		static HttpResponse	error(
+								int statusCode,
+								const std::string& body,
+								const std::string& contentType);
 		static HttpResponse	redirect(int statusCode, const std::string& location);
 		static HttpResponse	methodNotAllowed(
 								const std::vector<std::string>& allowedMethods);

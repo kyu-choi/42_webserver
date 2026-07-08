@@ -55,6 +55,21 @@ namespace webserv
 		return (response);
 	}
 
+	HttpResponse ResponseBuilder::error(
+		int statusCode,
+		const std::string& body,
+		const std::string& contentType)
+	{
+		HttpResponse response;
+		const int normalizedStatus = normalizeStatus(statusCode);
+
+		response.setStatusCode(normalizedStatus);
+		response.setHeader("Content-Type", contentType);
+		response.setBody(body);
+		response.setConnectionClose(true);
+		return (response);
+	}
+
 	HttpResponse ResponseBuilder::redirect(
 		int statusCode,
 		const std::string& location)
@@ -64,8 +79,6 @@ namespace webserv
 
 		response.setStatusCode(normalizedStatus);
 		response.setHeader("Location", location);
-		response.setHeader("Content-Type", "text/plain");
-		response.setBody(std::string(reasonPhrase(normalizedStatus)) + "\n");
 		response.setConnectionClose(true);
 		return (response);
 	}

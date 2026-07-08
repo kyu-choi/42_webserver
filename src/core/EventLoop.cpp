@@ -1,4 +1,5 @@
 #include "webserv/EventLoop.hpp"
+#include "webserv/ErrorPageHandler.hpp"
 #include "webserv/ResponseBuilder.hpp"
 #include "webserv/Router.hpp"
 #include "webserv/StaticFileHandler.hpp"
@@ -48,14 +49,52 @@ namespace
 		return (false);
 	}
 
-	std::vector<std::string> methodNames(
+	std::string methodNames(
 		const std::vector<webserv::HttpMethod>& methods)
 	{
-		std::vector<std::string> names;
+		std::string names;
 
 		for (std::size_t i = 0; i < methods.size(); ++i)
-			names.push_back(webserv::httpMethodName(methods[i]));
+		{
+			if (i != 0)
+				names += ", ";
+			names += webserv::httpMethodName(methods[i]);
+		}
 		return (names);
+	}
+
+	webserv::HttpResponse configuredErrorResponse(
+		int statusCode,
+		const std::map<int, std::string>& errorPages,
+		const std::string& root)
+	{
+		std::string body;
+		std::string contentType;
+
+		if (!webserv::ErrorPageHandler::loadCustomErrorPage(
+				statusCode,
+				errorPages,
+				root,
+				body,
+				contentType))
+		{
+			body = webserv::ErrorPageHandler::defaultErrorPage(statusCode);
+			contentType = "text/html";
+		}
+		return (webserv::ResponseBuilder::error(
+				statusCode,
+				body,
+				contentType));
+	}
+
+	bool bodyTooLarge(
+		const webserv::HttpRequest& request,
+		std::size_t clientMaxBodySize)
+	{
+		if (request.hasContentLength()
+			&& request.contentLength() > clientMaxBodySize)
+			return (true);
+		return (request.body().size() > clientMaxBodySize);
 	}
 }
 
@@ -330,57 +369,131 @@ namespace webserv
 	{
 		const ServerConfig* server;
 		RouteResult route;
+		HttpResponse response;
 
-		if (!isImplementedMethod(client.request().method()))
-		{
-			prepareErrorResponse(client, HTTP_STATUS_NOT_IMPLEMENTED);
-			return;
-		}
 		server = serverForClient(client);
 		if (server == 0)
 		{
 			prepareErrorResponse(client, HTTP_STATUS_INTERNAL_SERVER_ERROR);
 			return;
 		}
+		if (!isImplementedMethod(client.request().method()))
+		{
+			prepareErrorResponse(
+				client,
+				HTTP_STATUS_NOT_IMPLEMENTED,
+				server->errorPages,
+				server->root);
+			return;
+		}
+		route = Router::route(client.request(), *server);
+		if (!route.ok)
+		{
+			prepareErrorResponse(
+				client,
+				route.statusCode,
+				server->errorPages,
+				server->root);
+		}
+		else if (route.effective.redirectCode != 0)
+		{
+			client.setOutput(ResponseBuilder::redirect(
+					route.effective.redirectCode,
+					route.effective.redirectTarget).serialize());
+		}
+		else if (!methodAllowed(
+				client.request().method(),
+				route.effective.methods))
+		{
+			prepareMethodNotAllowedResponse(
+				client,
+				route.effective.methods,
+				route.effective.errorPages,
+				server->root);
+		}
+		else if (bodyTooLarge(
+				client.request(),
+				route.effective.clientMaxBodySize))
+		{
+			prepareErrorResponse(
+				client,
+				HTTP_STATUS_PAYLOAD_TOO_LARGE,
+				route.effective.errorPages,
+				server->root);
+		}
+		else if (client.request().method() != HTTP_METHOD_GET)
+		{
+			prepareErrorResponse(
+				client,
+				HTTP_STATUS_NOT_IMPLEMENTED,
+				route.effective.errorPages,
+				server->root);
+		}
 		else
 		{
-			route = Router::route(client.request(), *server);
-			if (!route.ok)
-				prepareErrorResponse(client, route.statusCode);
-			else if (route.effective.redirectCode != 0)
+			const StaticFileHandler handler(route.effective.root);
+
+			response = handler.handlePath(
+				route.filesystemPath,
+				route.effective.indexes);
+			if (isErrorStatusCode(response.statusCode()))
 			{
-				client.setOutput(ResponseBuilder::redirect(
-						route.effective.redirectCode,
-						route.effective.redirectTarget).serialize());
-			}
-			else if (!methodAllowed(
-					client.request().method(),
-					route.effective.methods))
-			{
-				client.setOutput(ResponseBuilder::methodNotAllowed(
-						methodNames(route.effective.methods)).serialize());
-			}
-			else if (client.request().method() != HTTP_METHOD_GET)
-			{
-				client.setOutput(ResponseBuilder::methodNotAllowed(
-						methodNames(route.effective.methods)).serialize());
+				prepareErrorResponse(
+					client,
+					response.statusCode(),
+					route.effective.errorPages,
+					server->root);
 			}
 			else
-			{
-				const StaticFileHandler handler(route.effective.root);
-
-				client.setOutput(handler.handlePath(
-						route.filesystemPath,
-						route.effective.indexes).serialize());
-			}
+				client.setOutput(response.serialize());
 		}
 	}
 
 	void EventLoop::prepareErrorResponse(Client& client, int statusCode)
 	{
+		const ServerConfig* server;
+
 		if (statusCode == 0)
 			statusCode = HTTP_STATUS_BAD_REQUEST;
-		client.setOutput(ResponseBuilder::error(statusCode).serialize());
+		server = serverForClient(client);
+		if (server == 0)
+			client.setOutput(ResponseBuilder::error(statusCode).serialize());
+		else
+			prepareErrorResponse(
+				client,
+				statusCode,
+				server->errorPages,
+				server->root);
+	}
+
+	void EventLoop::prepareErrorResponse(
+		Client& client,
+		int statusCode,
+		const std::map<int, std::string>& errorPages,
+		const std::string& root)
+	{
+		if (statusCode == 0)
+			statusCode = HTTP_STATUS_BAD_REQUEST;
+		client.setOutput(configuredErrorResponse(
+				statusCode,
+				errorPages,
+				root).serialize());
+	}
+
+	void EventLoop::prepareMethodNotAllowedResponse(
+		Client& client,
+		const std::vector<HttpMethod>& allowedMethods,
+		const std::map<int, std::string>& errorPages,
+		const std::string& root)
+	{
+		HttpResponse response;
+
+		response = configuredErrorResponse(
+			HTTP_STATUS_METHOD_NOT_ALLOWED,
+			errorPages,
+			root);
+		response.setHeader("Allow", methodNames(allowedMethods));
+		client.setOutput(response.serialize());
 	}
 
 	const ServerConfig* EventLoop::serverForClient(const Client& client) const

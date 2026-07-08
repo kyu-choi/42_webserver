@@ -39,7 +39,7 @@ int main(int argc, char** argv)
 
 		const std::string configPath = selectConfigPath(argc, argv);
 
-		std::cout << "webserv STEP09 multi-listen router server" << std::endl;
+		std::cout << "webserv STEP10 routing policy server" << std::endl;
 		std::cout << "config: " << configPath << std::endl;
 
 		webserv::ConfigParser parser;

@@ -44,6 +44,16 @@ namespace webserv
 		void	processClientInput(Client& client);
 		void	prepareSuccessResponse(Client& client);
 		void	prepareErrorResponse(Client& client, int statusCode);
+		void	prepareErrorResponse(
+					Client& client,
+					int statusCode,
+					const std::map<int, std::string>& errorPages,
+					const std::string& root);
+		void	prepareMethodNotAllowedResponse(
+					Client& client,
+					const std::vector<HttpMethod>& allowedMethods,
+					const std::map<int, std::string>& errorPages,
+					const std::string& root);
 		const ServerConfig*	serverForClient(const Client& client) const;
 	};
 }
