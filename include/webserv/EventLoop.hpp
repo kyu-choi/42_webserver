@@ -37,11 +37,13 @@ namespace webserv
 		void	removeFd(int fd);
 		bool	isListenFd(int fd) const;
 		void	closeClient(int fd);
+		void	closeTimedOutClients();
 
 		void	handleListenEvent(int listenFd);
 		void	handleClientRead(int fd);
 		void	handleClientWrite(int fd);
 		void	processClientInput(Client& client);
+		bool	prepareEarlyBodyLimitResponse(Client& client);
 		void	prepareSuccessResponse(Client& client);
 		void	prepareErrorResponse(Client& client, int statusCode);
 		void	prepareErrorResponse(

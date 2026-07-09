@@ -5,6 +5,7 @@
 #include "webserv/StaticFileHandler.hpp"
 #include <cerrno>
 #include <cstring>
+#include <ctime>
 #include <fcntl.h>
 #include <iostream>
 #include <stdexcept>
@@ -14,7 +15,9 @@
 namespace
 {
 	const std::size_t kBufferSize = 4096;
-	const std::size_t kMaxInputBufferSize = 1024 * 1024;
+	const std::size_t kMaxRawInputBufferSize = 64 * 1024 * 1024;
+	const int kPollTimeoutMs = 1000;
+	const std::time_t kClientTimeoutSeconds = 30;
 
 	std::string systemError(const std::string& context)
 	{
@@ -96,6 +99,15 @@ namespace
 			return (true);
 		return (request.body().size() > clientMaxBodySize);
 	}
+
+	std::size_t receivedBodyBytes(const std::string& input)
+	{
+		const std::size_t headerEnd = input.find("\r\n\r\n");
+
+		if (headerEnd == std::string::npos)
+			return (0);
+		return (input.size() - (headerEnd + 4));
+	}
 }
 
 namespace webserv
@@ -124,13 +136,21 @@ namespace webserv
 		std::cout << "webserv poll event loop started" << std::endl;
 		while (true)
 		{
-			const int ready = poll(&_pollFds[0], _pollFds.size(), -1);
+			const int ready = poll(
+				&_pollFds[0],
+				_pollFds.size(),
+				kPollTimeoutMs);
 
 			if (ready < 0)
 			{
 				if (errno == EINTR)
 					continue;
 				throw std::runtime_error(systemError("poll"));
+			}
+			if (ready == 0)
+			{
+				closeTimedOutClients();
+				continue;
 			}
 			std::vector<int> readyFds;
 			std::vector<short> readyEvents;
@@ -221,6 +241,21 @@ namespace webserv
 		closeFd(fd);
 	}
 
+	void EventLoop::closeTimedOutClients()
+	{
+		std::vector<int> expired;
+		const std::time_t now = std::time(0);
+
+		for (std::map<int, Client>::const_iterator it = _clients.begin();
+			it != _clients.end(); ++it)
+		{
+			if (now - it->second.lastActivity() >= kClientTimeoutSeconds)
+				expired.push_back(it->first);
+		}
+		for (std::size_t i = 0; i < expired.size(); ++i)
+			closeClient(expired[i]);
+	}
+
 	void EventLoop::handleListenEvent(int listenFd)
 	{
 		while (true)
@@ -288,7 +323,7 @@ namespace webserv
 		}
 		if (receivedAny)
 		{
-			if (client->inputBuffer().size() > kMaxInputBufferSize)
+			if (client->inputBuffer().size() > kMaxRawInputBufferSize)
 			{
 				prepareErrorResponse(*client, HTTP_STATUS_PAYLOAD_TOO_LARGE);
 			}
@@ -345,7 +380,10 @@ namespace webserv
 		if (result == RequestParser::PARSE_INCOMPLETE)
 		{
 			if (client.parser().state() == PARSER_BODY_BY_LENGTH)
+			{
 				client.setState(CLIENT_READING_BODY);
+				prepareEarlyBodyLimitResponse(client);
+			}
 			else
 				client.setState(CLIENT_READING_HEADERS);
 			return;
@@ -363,6 +401,58 @@ namespace webserv
 		client.setState(CLIENT_PROCESSING_REQUEST);
 		prepareSuccessResponse(client);
 		client.parser().reset();
+	}
+
+	bool EventLoop::prepareEarlyBodyLimitResponse(Client& client)
+	{
+		const ServerConfig* server;
+		RouteResult route;
+
+		if (!client.request().hasContentLength())
+			return (false);
+		server = serverForClient(client);
+		if (server == 0)
+			return (false);
+		if (!isImplementedMethod(client.request().method()))
+		{
+			prepareErrorResponse(
+				client,
+				HTTP_STATUS_NOT_IMPLEMENTED,
+				server->errorPages,
+				server->root);
+			return (true);
+		}
+		route = Router::route(client.request(), *server);
+		if (!route.ok)
+		{
+			prepareErrorResponse(
+				client,
+				route.statusCode,
+				server->errorPages,
+				server->root);
+			return (true);
+		}
+		if (!methodAllowed(client.request().method(), route.effective.methods))
+		{
+			prepareMethodNotAllowedResponse(
+				client,
+				route.effective.methods,
+				route.effective.errorPages,
+				server->root);
+			return (true);
+		}
+		if (client.request().contentLength() > route.effective.clientMaxBodySize
+			|| receivedBodyBytes(client.inputBuffer())
+				> route.effective.clientMaxBodySize)
+		{
+			prepareErrorResponse(
+				client,
+				HTTP_STATUS_PAYLOAD_TOO_LARGE,
+				route.effective.errorPages,
+				server->root);
+			return (true);
+		}
+		return (false);
 	}
 
 	void EventLoop::prepareSuccessResponse(Client& client)
@@ -420,6 +510,14 @@ namespace webserv
 				HTTP_STATUS_PAYLOAD_TOO_LARGE,
 				route.effective.errorPages,
 				server->root);
+		}
+		else if (client.request().method() == HTTP_METHOD_POST
+			&& route.uriPath == "/echo")
+		{
+			client.setOutput(ResponseBuilder::text(
+					HTTP_STATUS_OK,
+					client.request().body(),
+					"application/octet-stream").serialize());
 		}
 		else if (client.request().method() != HTTP_METHOD_GET)
 		{

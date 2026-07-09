@@ -298,7 +298,10 @@ namespace webserv
 				&& lowerString(value).find("chunked") != std::string::npos)
 			{
 				request.setBodyFraming(HttpRequest::BODY_CHUNKED);
-				setError(HTTP_STATUS_NOT_IMPLEMENTED);
+				if (hasContentLength)
+					setError(HTTP_STATUS_BAD_REQUEST);
+				else
+					setError(HTTP_STATUS_NOT_IMPLEMENTED);
 				return (PARSE_ERROR);
 			}
 			request.addHeader(name, value);
