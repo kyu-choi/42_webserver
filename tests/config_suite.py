@@ -29,6 +29,7 @@ def normal_configs_start():
     configs = [
         ("config/default.conf", (8080,)),
         ("config/step18.conf", (8080, 8081)),
+        ("config/step19.conf", (8080, 8081)),
         ("config/multiple_ports.conf", (8080, 8081)),
     ]
     for config, ports in configs:

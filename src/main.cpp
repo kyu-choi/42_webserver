@@ -44,7 +44,7 @@ int main(int argc, char** argv)
 		std::signal(SIGPIPE, SIG_IGN);
 		std::signal(SIGINT, webserv::handleShutdownSignal);
 		std::signal(SIGTERM, webserv::handleShutdownSignal);
-		std::cout << "webserv STEP17 cleanup-hardened server" << std::endl;
+		std::cout << "webserv starting" << std::endl;
 		std::cout << "config: " << configPath << std::endl;
 
 		webserv::ConfigParser parser;
