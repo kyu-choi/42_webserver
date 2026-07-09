@@ -46,6 +46,7 @@ run_step "chunked suite" python3 tests/chunked.py
 run_step "slow client suite" python3 tests/slow_client.py
 run_step "CGI non-blocking suite" python3 tests/cgi_nonblocking.py
 run_step "stress suite" python3 tests/stress.py
+run_step "bonus suite" python3 tests/bonus.py
 
 if [ "${SKIP_VALGRIND:-0}" = "1" ]; then
     printf '[INFO] valgrind smoke skipped because SKIP_VALGRIND=1\n'

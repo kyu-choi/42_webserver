@@ -10,8 +10,10 @@
 #include <cstring>
 #include <ctime>
 #include <fcntl.h>
+#include <iomanip>
 #include <iostream>
 #include <signal.h>
+#include <sstream>
 #include <stdexcept>
 #include <sys/socket.h>
 #include <sys/wait.h>
@@ -23,9 +25,12 @@ namespace
 	const std::size_t kMaxClients = 1024;
 	const std::size_t kMaxRawInputBufferSize = 64 * 1024 * 1024;
 	const std::size_t kMaxCgiOutputSize = 10 * 1024 * 1024;
+	const std::size_t kMaxSessions = 64;
 	const int kPollTimeoutMs = 1000;
 	const std::time_t kClientTimeoutSeconds = 30;
 	const std::time_t kCgiTimeoutSeconds = 3;
+	const std::time_t kSessionTtlSeconds = 3;
+	const char* kSessionCookieName = "WSID";
 
 	std::string systemError(const std::string& context)
 	{
@@ -116,6 +121,131 @@ namespace
 			|| state == webserv::PARSER_BODY_CHUNK_CRLF
 			|| state == webserv::PARSER_BODY_CHUNK_TRAILERS);
 	}
+
+	std::string trim(const std::string& value)
+	{
+		std::size_t begin;
+		std::size_t end;
+
+		begin = 0;
+		while (begin < value.size()
+			&& (value[begin] == ' ' || value[begin] == '\t'))
+			++begin;
+		end = value.size();
+		while (end > begin
+			&& (value[end - 1] == ' ' || value[end - 1] == '\t'))
+			--end;
+		return (value.substr(begin, end - begin));
+	}
+
+	std::string numberToString(unsigned long value)
+	{
+		std::ostringstream stream;
+
+		stream << value;
+		return (stream.str());
+	}
+
+	bool isValidSessionId(const std::string& value)
+	{
+		if (value.size() != 32)
+			return (false);
+		for (std::size_t i = 0; i < value.size(); ++i)
+		{
+			const char c = value[i];
+
+			if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')))
+				return (false);
+		}
+		return (true);
+	}
+
+	std::string cookieValue(
+		const std::string& cookieHeader,
+		const std::string& name)
+	{
+		std::size_t start;
+
+		start = 0;
+		while (start < cookieHeader.size())
+		{
+			std::size_t end;
+			std::string token;
+			std::size_t equal;
+
+			end = cookieHeader.find(';', start);
+			if (end == std::string::npos)
+				end = cookieHeader.size();
+			token = trim(cookieHeader.substr(start, end - start));
+			equal = token.find('=');
+			if (equal != std::string::npos)
+			{
+				const std::string tokenName = trim(token.substr(0, equal));
+				const std::string tokenValue = trim(token.substr(equal + 1));
+
+				if (tokenName == name)
+					return (tokenValue);
+			}
+			start = end + 1;
+		}
+		return ("");
+	}
+
+	std::string hexEncode(const unsigned char* bytes, std::size_t length)
+	{
+		const char* digits = "0123456789abcdef";
+		std::string result;
+
+		for (std::size_t i = 0; i < length; ++i)
+		{
+			result += digits[(bytes[i] >> 4) & 0x0f];
+			result += digits[bytes[i] & 0x0f];
+		}
+		return (result);
+	}
+
+	bool fillRandomBytes(unsigned char* bytes, std::size_t length)
+	{
+		const int fd = open("/dev/urandom", O_RDONLY);
+		std::size_t filled;
+
+		if (fd < 0)
+			return (false);
+		filled = 0;
+		while (filled < length)
+		{
+			const ssize_t result = read(fd, bytes + filled, length - filled);
+
+			if (result > 0)
+			{
+				filled += static_cast<std::size_t>(result);
+				continue;
+			}
+			if (result < 0 && errno == EINTR)
+				continue;
+			close(fd);
+			return (false);
+		}
+		close(fd);
+		return (true);
+	}
+
+	void fillFallbackBytes(
+		unsigned char* bytes,
+		std::size_t length,
+		unsigned long counter)
+	{
+		unsigned long seed;
+
+		seed = static_cast<unsigned long>(std::time(0))
+			^ static_cast<unsigned long>(getpid())
+			^ (counter * 1103515245UL);
+		for (std::size_t i = 0; i < length; ++i)
+		{
+			seed = seed * 1103515245UL + 12345UL;
+			bytes[i] = static_cast<unsigned char>((seed >> 16) & 0xff);
+		}
+	}
 }
 
 namespace webserv
@@ -160,6 +290,20 @@ namespace webserv
 	{
 	}
 
+	EventLoop::Session::Session()
+		: visits(0),
+		  createdAt(0),
+		  lastAccess(0)
+	{
+	}
+
+	EventLoop::Session::Session(std::time_t now)
+		: visits(0),
+		  createdAt(now),
+		  lastAccess(now)
+	{
+	}
+
 	ListenSocketConfig::ListenSocketConfig(
 		int fdValue,
 		const ServerConfig& serverValue)
@@ -173,7 +317,9 @@ namespace webserv
 		  _serversByListenFd(),
 		  _cgiJobs(),
 		  _cgiClientByFd(),
-		  _orphanedCgiPids()
+		  _orphanedCgiPids(),
+		  _sessions(),
+		  _sessionCounter(0)
 	{
 		if (listeners.empty())
 			throw std::runtime_error("event loop: no listen sockets");
@@ -712,6 +858,11 @@ namespace webserv
 				route.effective.errorPages,
 				server->root);
 		}
+		else if (client.request().method() == HTTP_METHOD_GET
+			&& route.uriPath == "/session")
+		{
+			prepareSessionResponse(client);
+		}
 		else if (CgiHandler::isCgiRequest(route))
 		{
 			startCgiResponse(client, route, *server);
@@ -809,6 +960,119 @@ namespace webserv
 			else
 				client.setOutput(response.serialize());
 		}
+	}
+
+	void EventLoop::prepareSessionResponse(Client& client)
+	{
+		const std::time_t now = std::time(0);
+		std::string sessionId;
+		std::string requestedId;
+		std::map<std::string, Session>::iterator it;
+		bool created;
+		HttpResponse response;
+		std::string body;
+
+		purgeExpiredSessions(now);
+		requestedId = cookieValue(
+			client.request().header("Cookie"),
+			kSessionCookieName);
+		created = true;
+		if (isValidSessionId(requestedId))
+		{
+			it = _sessions.find(requestedId);
+			if (it != _sessions.end())
+			{
+				sessionId = requestedId;
+				created = false;
+			}
+		}
+		if (created)
+		{
+			enforceSessionLimit();
+			sessionId = createSessionId();
+			_sessions[sessionId] = Session(now);
+		}
+		Session& session = _sessions[sessionId];
+		++session.visits;
+		session.lastAccess = now;
+		body = "session_id: " + sessionId + "\n";
+		body += "new: ";
+		body += created ? "yes\n" : "no\n";
+		body += "visits: " + numberToString(session.visits) + "\n";
+		body += "created_at: "
+			+ numberToString(static_cast<unsigned long>(session.createdAt))
+			+ "\n";
+		body += "last_access: "
+			+ numberToString(static_cast<unsigned long>(session.lastAccess))
+			+ "\n";
+		body += "ttl_seconds: "
+			+ numberToString(static_cast<unsigned long>(kSessionTtlSeconds))
+			+ "\n";
+		body += "active_sessions: "
+			+ numberToString(static_cast<unsigned long>(_sessions.size()))
+			+ "\n";
+		response = ResponseBuilder::text(
+			HTTP_STATUS_OK,
+			body,
+			"text/plain");
+		response.setHeader(
+			"Set-Cookie",
+			std::string(kSessionCookieName) + "=" + sessionId
+				+ "; Path=/session; Max-Age="
+				+ numberToString(static_cast<unsigned long>(
+					kSessionTtlSeconds))
+				+ "; HttpOnly; SameSite=Lax");
+		client.setOutput(response.serialize());
+	}
+
+	void EventLoop::purgeExpiredSessions(std::time_t now)
+	{
+		std::vector<std::string> expired;
+
+		for (std::map<std::string, Session>::const_iterator it =
+			_sessions.begin(); it != _sessions.end(); ++it)
+		{
+			if (now - it->second.lastAccess >= kSessionTtlSeconds)
+				expired.push_back(it->first);
+		}
+		for (std::size_t i = 0; i < expired.size(); ++i)
+			_sessions.erase(expired[i]);
+	}
+
+	void EventLoop::enforceSessionLimit()
+	{
+		while (_sessions.size() >= kMaxSessions && !_sessions.empty())
+		{
+			std::map<std::string, Session>::iterator oldest =
+				_sessions.begin();
+
+			for (std::map<std::string, Session>::iterator it =
+				_sessions.begin(); it != _sessions.end(); ++it)
+			{
+				if (it->second.lastAccess < oldest->second.lastAccess)
+					oldest = it;
+			}
+			_sessions.erase(oldest);
+		}
+	}
+
+	std::string EventLoop::createSessionId()
+	{
+		unsigned char bytes[16];
+
+		for (int attempt = 0; attempt < 16; ++attempt)
+		{
+			std::string id;
+
+			++_sessionCounter;
+			if (!fillRandomBytes(bytes, sizeof(bytes)))
+				fillFallbackBytes(bytes, sizeof(bytes), _sessionCounter);
+			id = hexEncode(bytes, sizeof(bytes));
+			if (_sessions.find(id) == _sessions.end())
+				return (id);
+		}
+		fillFallbackBytes(bytes, sizeof(bytes), ++_sessionCounter);
+		return (hexEncode(bytes, sizeof(bytes)));
 	}
 
 	void EventLoop::startCgiResponse(

@@ -55,12 +55,24 @@ namespace webserv
 				const std::string& errorRootValue);
 		};
 
+		struct Session
+		{
+			unsigned int	visits;
+			std::time_t		createdAt;
+			std::time_t		lastAccess;
+
+			Session();
+			explicit Session(std::time_t now);
+		};
+
 		std::vector<pollfd>				_pollFds;
 		std::map<int, Client>			_clients;
 		std::map<int, ServerConfig>		_serversByListenFd;
 		std::map<int, CgiJob>			_cgiJobs;
 		std::map<int, int>				_cgiClientByFd;
 		std::vector<pid_t>				_orphanedCgiPids;
+		std::map<std::string, Session>	_sessions;
+		unsigned long					_sessionCounter;
 
 		EventLoop(const EventLoop& other);
 		EventLoop&	operator=(const EventLoop& other);
@@ -83,6 +95,10 @@ namespace webserv
 		void	processClientInput(Client& client);
 		bool	prepareEarlyBodyLimitResponse(Client& client);
 		void	prepareSuccessResponse(Client& client);
+		void	prepareSessionResponse(Client& client);
+		void	purgeExpiredSessions(std::time_t now);
+		void	enforceSessionLimit();
+		std::string	createSessionId();
 		void	startCgiResponse(
 					Client& client,
 					const RouteResult& route,

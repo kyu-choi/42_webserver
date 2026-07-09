@@ -170,5 +170,13 @@ curl -i "http://127.0.0.1:8080/cgi-bin/hello.py?name=eval"
 
 ## Bonus 상태
 
-- [N/A] cookie/session management는 현재 mandatory 구현 범위에 포함하지 않았다.
-- [N/A] 여러 CGI interpreter type 지원은 bonus 단계에서 다룬다.
+- [x] cookie parsing을 구현했다.
+- [x] `/session` route에서만 session을 생성한다.
+- [x] session id를 `WSID` cookie로 전달한다.
+- [x] session별 방문 횟수와 마지막 접근 시간을 저장한다.
+- [x] session TTL을 적용한다.
+- [x] session 최대 개수 제한을 적용한다.
+- [x] 일반 정적 요청에서는 session을 만들지 않는다.
+- [x] 여러 CGI interpreter type을 같은 non-blocking CGI pipe 구조로 처리한다.
+- [x] `config/step20.conf`에서 `.py`와 `.sh` CGI type을 시연한다.
+- [x] `tests/bonus.py`에서 cookie/session과 여러 CGI type을 자동 검증한다.
