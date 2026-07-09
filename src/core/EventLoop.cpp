@@ -3,6 +3,7 @@
 #include "webserv/ErrorPageHandler.hpp"
 #include "webserv/ResponseBuilder.hpp"
 #include "webserv/Router.hpp"
+#include "webserv/Signal.hpp"
 #include "webserv/StaticFileHandler.hpp"
 #include "webserv/UploadHandler.hpp"
 #include <cerrno>
@@ -19,6 +20,7 @@
 namespace
 {
 	const std::size_t kBufferSize = 4096;
+	const std::size_t kMaxClients = 1024;
 	const std::size_t kMaxRawInputBufferSize = 64 * 1024 * 1024;
 	const std::size_t kMaxCgiOutputSize = 10 * 1024 * 1024;
 	const int kPollTimeoutMs = 1000;
@@ -182,10 +184,23 @@ namespace webserv
 		}
 	}
 
+	EventLoop::~EventLoop()
+	{
+		std::vector<int> cgiClientFds;
+
+		closeAllClients();
+		for (std::map<int, CgiJob>::const_iterator it = _cgiJobs.begin();
+			it != _cgiJobs.end(); ++it)
+			cgiClientFds.push_back(it->first);
+		for (std::size_t i = 0; i < cgiClientFds.size(); ++i)
+			cleanupCgiForClient(cgiClientFds[i], true);
+		reapOrphanedCgiPids();
+	}
+
 	void EventLoop::run()
 	{
 		std::cout << "webserv poll event loop started" << std::endl;
-		while (true)
+		while (!shutdownRequested())
 		{
 			const int ready = poll(
 				&_pollFds[0],
@@ -198,12 +213,10 @@ namespace webserv
 					continue;
 				throw std::runtime_error(systemError("poll"));
 			}
+			closeTimedOutClients();
+			checkCgiJobs();
 			if (ready == 0)
-			{
-				closeTimedOutClients();
-				checkCgiJobs();
 				continue;
-			}
 			std::vector<int> readyFds;
 			std::vector<short> readyEvents;
 			for (std::size_t i = 0; i < _pollFds.size(); ++i)
@@ -246,8 +259,8 @@ namespace webserv
 						handleClientWrite(fd);
 				}
 			}
-			checkCgiJobs();
 		}
+		std::cout << "webserv event loop stopping" << std::endl;
 	}
 
 	void EventLoop::addFd(int fd, short events)
@@ -298,10 +311,23 @@ namespace webserv
 
 	void EventLoop::closeClient(int fd)
 	{
+		if (_clients.find(fd) == _clients.end())
+			return;
 		cleanupCgiForClient(fd, true);
 		removeFd(fd);
 		_clients.erase(fd);
 		closeFd(fd);
+	}
+
+	void EventLoop::closeAllClients()
+	{
+		std::vector<int> clientFds;
+
+		for (std::map<int, Client>::const_iterator it = _clients.begin();
+			it != _clients.end(); ++it)
+			clientFds.push_back(it->first);
+		for (std::size_t i = 0; i < clientFds.size(); ++i)
+			closeClient(clientFds[i]);
 	}
 
 	void EventLoop::closeTimedOutClients()
@@ -335,6 +361,11 @@ namespace webserv
 			}
 			try
 			{
+				if (_clients.size() >= kMaxClients)
+				{
+					closeFd(clientFd);
+					continue;
+				}
 				setNonBlocking(clientFd);
 				_clients.insert(std::make_pair(clientFd,
 						Client(clientFd, listenFd)));

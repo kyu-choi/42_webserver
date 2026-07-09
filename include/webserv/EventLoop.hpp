@@ -25,6 +25,7 @@ namespace webserv
 	{
 	public:
 		explicit EventLoop(const std::vector<ListenSocketConfig>& listeners);
+		~EventLoop();
 
 		void	run();
 
@@ -70,6 +71,7 @@ namespace webserv
 		bool	isListenFd(int fd) const;
 		bool	isCgiFd(int fd) const;
 		void	closeClient(int fd);
+		void	closeAllClients();
 		void	closeTimedOutClients();
 
 		void	handleListenEvent(int listenFd);

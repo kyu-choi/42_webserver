@@ -18,17 +18,19 @@ stat()으로 path 확인
 
 ## 생성/수정한 파일
 
-| 경로 | 구현 내용 |
-|---|---|
-| `include/webserv/StaticFileHandler.hpp` | `handlePath()`에 `autoindex`, `uriPath` 인자 추가 |
-| `src/handlers/StaticFileHandler.cpp` | directory 판별, slash redirect, index 검색, autoindex listing 생성 |
-| `src/core/EventLoop.cpp` | Router의 effective autoindex와 URI path를 static handler에 전달 |
-| `src/http/Router.cpp` | trailing slash 보존, location root 상속 시 filesystem path 계산 수정 |
-| `src/main.cpp` | 실행 메시지를 STEP11에 맞게 변경 |
-| `config/step11.conf` | directory index/autoindex 검증용 config |
-| `www/listing/*` | autoindex listing 검증용 파일과 하위 directory |
-| `www/private-directory/.gitkeep` | autoindex off 검증용 directory |
-| `www/has-index/home.html` | autoindex보다 index가 우선되는지 검증 |
+
+| 경로                                      | 구현 내용                                                        |
+| --------------------------------------- | ------------------------------------------------------------ |
+| `include/webserv/StaticFileHandler.hpp` | `handlePath()`에 `autoindex`, `uriPath` 인자 추가                 |
+| `src/handlers/StaticFileHandler.cpp`    | directory 판별, slash redirect, index 검색, autoindex listing 생성 |
+| `src/core/EventLoop.cpp`                | Router의 effective autoindex와 URI path를 static handler에 전달    |
+| `src/http/Router.cpp`                   | trailing slash 보존, location root 상속 시 filesystem path 계산 수정  |
+| `src/main.cpp`                          | 실행 메시지를 STEP11에 맞게 변경                                        |
+| `config/step11.conf`                    | directory index/autoindex 검증용 config                         |
+| `www/listing/*`                         | autoindex listing 검증용 파일과 하위 directory                       |
+| `www/private-directory/.gitkeep`        | autoindex off 검증용 directory                                  |
+| `www/has-index/home.html`               | autoindex보다 index가 우선되는지 검증                                  |
+
 
 ## Directory 판별
 

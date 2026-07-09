@@ -1,5 +1,6 @@
 #include "webserv/ConfigParser.hpp"
 #include "webserv/Server.hpp"
+#include "webserv/Signal.hpp"
 #include <csignal>
 #include <exception>
 #include <iostream>
@@ -41,7 +42,9 @@ int main(int argc, char** argv)
 		const std::string configPath = selectConfigPath(argc, argv);
 
 		std::signal(SIGPIPE, SIG_IGN);
-		std::cout << "webserv STEP16 CGI server" << std::endl;
+		std::signal(SIGINT, webserv::handleShutdownSignal);
+		std::signal(SIGTERM, webserv::handleShutdownSignal);
+		std::cout << "webserv STEP17 cleanup-hardened server" << std::endl;
 		std::cout << "config: " << configPath << std::endl;
 
 		webserv::ConfigParser parser;

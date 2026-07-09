@@ -14,6 +14,7 @@ SRCS := \
 	$(SRC_DIR)/core/Client.cpp \
 	$(SRC_DIR)/core/EventLoop.cpp \
 	$(SRC_DIR)/core/Server.cpp \
+	$(SRC_DIR)/core/Signal.cpp \
 	$(SRC_DIR)/core/StateMachine.cpp \
 	$(SRC_DIR)/handlers/CgiHandler.cpp \
 	$(SRC_DIR)/handlers/DeleteHandler.cpp \
