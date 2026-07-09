@@ -43,6 +43,7 @@ namespace webserv
 		BodyFraming			bodyFraming() const;
 		bool				hasContentLength() const;
 		std::size_t			contentLength() const;
+		const std::map<std::string, std::string>&	headers() const;
 		bool				hasHeader(const std::string& name) const;
 		std::string			header(const std::string& name) const;
 		int					errorStatus() const;

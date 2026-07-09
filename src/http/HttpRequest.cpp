@@ -149,6 +149,11 @@ namespace webserv
 		return (_contentLength);
 	}
 
+	const std::map<std::string, std::string>& HttpRequest::headers() const
+	{
+		return (_headers);
+	}
+
 	bool HttpRequest::hasHeader(const std::string& name) const
 	{
 		return (_headers.find(lowerString(name)) != _headers.end());

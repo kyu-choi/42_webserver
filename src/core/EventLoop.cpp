@@ -10,16 +10,20 @@
 #include <ctime>
 #include <fcntl.h>
 #include <iostream>
+#include <signal.h>
 #include <stdexcept>
 #include <sys/socket.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 namespace
 {
 	const std::size_t kBufferSize = 4096;
 	const std::size_t kMaxRawInputBufferSize = 64 * 1024 * 1024;
+	const std::size_t kMaxCgiOutputSize = 10 * 1024 * 1024;
 	const int kPollTimeoutMs = 1000;
 	const std::time_t kClientTimeoutSeconds = 30;
+	const std::time_t kCgiTimeoutSeconds = 3;
 
 	std::string systemError(const std::string& context)
 	{
@@ -114,6 +118,46 @@ namespace
 
 namespace webserv
 {
+	EventLoop::CgiJob::CgiJob()
+		: pid(-1),
+		  clientFd(-1),
+		  stdinFd(-1),
+		  stdoutFd(-1),
+		  requestBody(),
+		  stdinOffset(0),
+		  output(),
+		  startTime(std::time(0)),
+		  stdinClosed(true),
+		  stdoutClosed(true),
+		  childReaped(true),
+		  childStatus(0),
+		  errorPages(),
+		  errorRoot()
+	{
+	}
+
+	EventLoop::CgiJob::CgiJob(
+		int clientFdValue,
+		const CgiExecution& execution,
+		const std::map<int, std::string>& errorPagesValue,
+		const std::string& errorRootValue)
+		: pid(execution.pid),
+		  clientFd(clientFdValue),
+		  stdinFd(execution.stdinFd),
+		  stdoutFd(execution.stdoutFd),
+		  requestBody(execution.requestBody),
+		  stdinOffset(0),
+		  output(),
+		  startTime(std::time(0)),
+		  stdinClosed(false),
+		  stdoutClosed(false),
+		  childReaped(false),
+		  childStatus(0),
+		  errorPages(errorPagesValue),
+		  errorRoot(errorRootValue)
+	{
+	}
+
 	ListenSocketConfig::ListenSocketConfig(
 		int fdValue,
 		const ServerConfig& serverValue)
@@ -122,7 +166,12 @@ namespace webserv
 	}
 
 	EventLoop::EventLoop(const std::vector<ListenSocketConfig>& listeners)
-		: _pollFds(), _clients(), _serversByListenFd()
+		: _pollFds(),
+		  _clients(),
+		  _serversByListenFd(),
+		  _cgiJobs(),
+		  _cgiClientByFd(),
+		  _orphanedCgiPids()
 	{
 		if (listeners.empty())
 			throw std::runtime_error("event loop: no listen sockets");
@@ -152,6 +201,7 @@ namespace webserv
 			if (ready == 0)
 			{
 				closeTimedOutClients();
+				checkCgiJobs();
 				continue;
 			}
 			std::vector<int> readyFds;
@@ -176,6 +226,10 @@ namespace webserv
 					if ((events & POLLIN) != 0)
 						handleListenEvent(fd);
 				}
+				else if (isCgiFd(fd))
+				{
+					handleCgiEvent(fd, events);
+				}
 				else
 				{
 					if (_clients.find(fd) == _clients.end())
@@ -192,6 +246,7 @@ namespace webserv
 						handleClientWrite(fd);
 				}
 			}
+			checkCgiJobs();
 		}
 	}
 
@@ -236,8 +291,14 @@ namespace webserv
 		return (_serversByListenFd.find(fd) != _serversByListenFd.end());
 	}
 
+	bool EventLoop::isCgiFd(int fd) const
+	{
+		return (_cgiClientByFd.find(fd) != _cgiClientByFd.end());
+	}
+
 	void EventLoop::closeClient(int fd)
 	{
+		cleanupCgiForClient(fd, true);
 		removeFd(fd);
 		_clients.erase(fd);
 		closeFd(fd);
@@ -372,6 +433,115 @@ namespace webserv
 		}
 		client.markClosing();
 		closeClient(fd);
+	}
+
+	void EventLoop::handleCgiEvent(int fd, short events)
+	{
+		std::map<int, int>::iterator fdIt;
+		std::map<int, CgiJob>::iterator jobIt;
+		int clientFd;
+
+		fdIt = _cgiClientByFd.find(fd);
+		if (fdIt == _cgiClientByFd.end())
+			return;
+		clientFd = fdIt->second;
+		jobIt = _cgiJobs.find(clientFd);
+		if (jobIt == _cgiJobs.end())
+		{
+			_cgiClientByFd.erase(fdIt);
+			removeFd(fd);
+			closeFd(fd);
+			return;
+		}
+		if ((events & POLLNVAL) != 0)
+		{
+			failCgiJob(clientFd, HTTP_STATUS_BAD_GATEWAY, true);
+			return;
+		}
+		if (fd == jobIt->second.stdinFd)
+		{
+			if ((events & POLLOUT) != 0)
+				handleCgiWrite(jobIt->second);
+			if (_cgiJobs.find(clientFd) != _cgiJobs.end()
+				&& (events & (POLLERR | POLLHUP)) != 0)
+				closeCgiFd(jobIt->second, jobIt->second.stdinFd);
+		}
+		else if (fd == jobIt->second.stdoutFd)
+		{
+			if ((events & (POLLIN | POLLHUP)) != 0)
+				handleCgiRead(jobIt->second);
+			if (_cgiJobs.find(clientFd) != _cgiJobs.end()
+				&& (events & POLLERR) != 0)
+				failCgiJob(clientFd, HTTP_STATUS_BAD_GATEWAY, true);
+		}
+	}
+
+	void EventLoop::handleCgiWrite(CgiJob& job)
+	{
+		while (job.stdinFd >= 0
+			&& job.stdinOffset < job.requestBody.size())
+		{
+			const ssize_t written = write(
+				job.stdinFd,
+				job.requestBody.data() + job.stdinOffset,
+				job.requestBody.size() - job.stdinOffset);
+
+			if (written > 0)
+			{
+				job.stdinOffset += static_cast<std::size_t>(written);
+				continue;
+			}
+			if (written == 0)
+				break;
+			if (errno == EINTR)
+				continue;
+			if (errno == EAGAIN || errno == EWOULDBLOCK)
+				return;
+			closeCgiFd(job, job.stdinFd);
+			job.stdinClosed = true;
+			return;
+		}
+		if (job.stdinOffset >= job.requestBody.size())
+		{
+			closeCgiFd(job, job.stdinFd);
+			job.stdinClosed = true;
+		}
+	}
+
+	void EventLoop::handleCgiRead(CgiJob& job)
+	{
+		char buffer[kBufferSize];
+
+		while (job.stdoutFd >= 0)
+		{
+			const ssize_t bytesRead = read(job.stdoutFd, buffer, sizeof(buffer));
+
+			if (bytesRead > 0)
+			{
+				job.output.append(buffer, static_cast<std::size_t>(bytesRead));
+				if (job.output.size() > kMaxCgiOutputSize)
+				{
+					failCgiJob(
+						job.clientFd,
+						HTTP_STATUS_BAD_GATEWAY,
+						true);
+					return;
+				}
+				continue;
+			}
+			if (bytesRead == 0)
+			{
+				closeCgiFd(job, job.stdoutFd);
+				job.stdoutClosed = true;
+				return;
+			}
+			if (errno == EINTR)
+				continue;
+			if (errno == EAGAIN || errno == EWOULDBLOCK)
+				return;
+			failCgiJob(job.clientFd, HTTP_STATUS_BAD_GATEWAY, true);
+			return;
+		}
 	}
 
 	void EventLoop::processClientInput(Client& client)
@@ -511,6 +681,10 @@ namespace webserv
 				route.effective.errorPages,
 				server->root);
 		}
+		else if (CgiHandler::isCgiRequest(route))
+		{
+			startCgiResponse(client, route, *server);
+		}
 		else if (client.request().method() == HTTP_METHOD_POST
 			&& route.uriPath == "/echo")
 		{
@@ -604,6 +778,208 @@ namespace webserv
 			else
 				client.setOutput(response.serialize());
 		}
+	}
+
+	void EventLoop::startCgiResponse(
+		Client& client,
+		const RouteResult& route,
+		const ServerConfig& server)
+	{
+		const CgiExecution execution = CgiHandler::start(
+			client.request(),
+			route);
+
+		if (!execution.ok)
+		{
+			prepareErrorResponse(
+				client,
+				execution.statusCode,
+				route.effective.errorPages,
+				server.root);
+			return;
+		}
+		_cgiJobs[client.fd()] = CgiJob(
+			client.fd(),
+			execution,
+			route.effective.errorPages,
+			server.root);
+		CgiJob& job = _cgiJobs[client.fd()];
+		client.setState(CLIENT_RUNNING_CGI);
+		_cgiClientByFd[job.stdoutFd] = client.fd();
+		addFd(job.stdoutFd, POLLIN);
+		if (job.requestBody.empty())
+		{
+			closeCgiFd(job, job.stdinFd);
+			job.stdinClosed = true;
+		}
+		else
+		{
+			_cgiClientByFd[job.stdinFd] = client.fd();
+			addFd(job.stdinFd, POLLOUT);
+		}
+	}
+
+	void EventLoop::checkCgiJobs()
+	{
+		std::vector<int> clients;
+		const std::time_t now = std::time(0);
+
+		reapOrphanedCgiPids();
+		for (std::map<int, CgiJob>::const_iterator it = _cgiJobs.begin();
+			it != _cgiJobs.end(); ++it)
+			clients.push_back(it->first);
+		for (std::size_t i = 0; i < clients.size(); ++i)
+		{
+			std::map<int, CgiJob>::iterator it = _cgiJobs.find(clients[i]);
+
+			if (it == _cgiJobs.end())
+				continue;
+			CgiJob& job = it->second;
+			if (!job.childReaped)
+			{
+				int status;
+				const pid_t result = waitpid(job.pid, &status, WNOHANG);
+
+				if (result == job.pid)
+				{
+					job.childReaped = true;
+					job.childStatus = status;
+				}
+				else if (result < 0)
+				{
+					job.childReaped = true;
+					job.childStatus = 1;
+				}
+			}
+			if (_cgiJobs.find(clients[i]) == _cgiJobs.end())
+				continue;
+			if (!job.childReaped && now - job.startTime >= kCgiTimeoutSeconds)
+			{
+				failCgiJob(clients[i], HTTP_STATUS_GATEWAY_TIMEOUT, true);
+				continue;
+			}
+			if (job.stdoutClosed && job.childReaped)
+				completeCgiJob(clients[i]);
+		}
+	}
+
+	void EventLoop::reapOrphanedCgiPids()
+	{
+		std::vector<pid_t> stillRunning;
+
+		for (std::size_t i = 0; i < _orphanedCgiPids.size(); ++i)
+		{
+			int status;
+			const pid_t result = waitpid(_orphanedCgiPids[i], &status, WNOHANG);
+
+			if (result == 0)
+				stillRunning.push_back(_orphanedCgiPids[i]);
+		}
+		_orphanedCgiPids = stillRunning;
+	}
+
+	void EventLoop::closeCgiFd(CgiJob& job, int& fd)
+	{
+		if (fd < 0)
+			return;
+		_cgiClientByFd.erase(fd);
+		removeFd(fd);
+		closeFd(fd);
+		fd = -1;
+		(void)job;
+	}
+
+	void EventLoop::cleanupCgiForClient(int clientFd, bool terminateChild)
+	{
+		std::map<int, CgiJob>::iterator it = _cgiJobs.find(clientFd);
+
+		if (it == _cgiJobs.end())
+			return;
+		CgiJob& job = it->second;
+		closeCgiFd(job, job.stdinFd);
+		closeCgiFd(job, job.stdoutFd);
+		if (terminateChild && !job.childReaped && job.pid > 0)
+			kill(job.pid, SIGKILL);
+		if (!job.childReaped && job.pid > 0)
+		{
+			int status;
+			const pid_t result = waitpid(job.pid, &status, WNOHANG);
+
+			if (result == 0)
+				_orphanedCgiPids.push_back(job.pid);
+		}
+		_cgiJobs.erase(it);
+	}
+
+	void EventLoop::failCgiJob(
+		int clientFd,
+		int statusCode,
+		bool terminateChild)
+	{
+		std::map<int, Client>::iterator clientIt = _clients.find(clientFd);
+		std::map<int, CgiJob>::iterator jobIt = _cgiJobs.find(clientFd);
+		std::map<int, std::string> errorPages;
+		std::string errorRoot;
+
+		if (jobIt != _cgiJobs.end())
+		{
+			errorPages = jobIt->second.errorPages;
+			errorRoot = jobIt->second.errorRoot;
+		}
+		cleanupCgiForClient(clientFd, terminateChild);
+		if (clientIt == _clients.end())
+			return;
+		prepareErrorResponse(
+			clientIt->second,
+			statusCode,
+			errorPages,
+			errorRoot);
+		updateEvents(clientFd, clientIt->second.desiredPollEvents());
+	}
+
+	void EventLoop::completeCgiJob(int clientFd)
+	{
+		std::map<int, Client>::iterator clientIt = _clients.find(clientFd);
+		std::map<int, CgiJob>::iterator jobIt = _cgiJobs.find(clientFd);
+		std::string output;
+		int childStatus;
+		std::map<int, std::string> errorPages;
+		std::string errorRoot;
+		HttpResponse response;
+		bool responseOk;
+
+		if (jobIt == _cgiJobs.end())
+			return;
+		output = jobIt->second.output;
+		childStatus = jobIt->second.childStatus;
+		errorPages = jobIt->second.errorPages;
+		errorRoot = jobIt->second.errorRoot;
+		cleanupCgiForClient(clientFd, false);
+		if (clientIt == _clients.end())
+			return;
+		if (!WIFEXITED(childStatus) || WEXITSTATUS(childStatus) != 0)
+		{
+			prepareErrorResponse(
+				clientIt->second,
+				HTTP_STATUS_BAD_GATEWAY,
+				errorPages,
+				errorRoot);
+		}
+		else
+		{
+			responseOk = CgiHandler::buildResponse(output, response);
+			if (!responseOk)
+			{
+				prepareErrorResponse(
+					clientIt->second,
+					HTTP_STATUS_BAD_GATEWAY,
+					errorPages,
+					errorRoot);
+			}
+			else
+				clientIt->second.setOutput(response.serialize());
+		}
+		updateEvents(clientFd, clientIt->second.desiredPollEvents());
 	}
 
 	void EventLoop::prepareErrorResponse(Client& client, int statusCode)

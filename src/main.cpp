@@ -1,5 +1,6 @@
 #include "webserv/ConfigParser.hpp"
 #include "webserv/Server.hpp"
+#include <csignal>
 #include <exception>
 #include <iostream>
 #include <string>
@@ -39,7 +40,8 @@ int main(int argc, char** argv)
 
 		const std::string configPath = selectConfigPath(argc, argv);
 
-		std::cout << "webserv STEP15 chunked body server" << std::endl;
+		std::signal(SIGPIPE, SIG_IGN);
+		std::cout << "webserv STEP16 CGI server" << std::endl;
 		std::cout << "config: " << configPath << std::endl;
 
 		webserv::ConfigParser parser;
