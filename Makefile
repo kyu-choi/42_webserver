@@ -17,6 +17,7 @@ SRCS := \
 	$(SRC_DIR)/core/StateMachine.cpp \
 	$(SRC_DIR)/handlers/ErrorPageHandler.cpp \
 	$(SRC_DIR)/handlers/StaticFileHandler.cpp \
+	$(SRC_DIR)/handlers/UploadHandler.cpp \
 	$(SRC_DIR)/http/Http.cpp \
 	$(SRC_DIR)/http/HttpResponse.cpp \
 	$(SRC_DIR)/http/HttpRequest.cpp \

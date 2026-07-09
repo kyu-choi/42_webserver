@@ -3,6 +3,7 @@
 #include "webserv/ResponseBuilder.hpp"
 #include "webserv/Router.hpp"
 #include "webserv/StaticFileHandler.hpp"
+#include "webserv/UploadHandler.hpp"
 #include <cerrno>
 #include <cstring>
 #include <ctime>
@@ -518,6 +519,33 @@ namespace webserv
 					HTTP_STATUS_OK,
 					client.request().body(),
 					"application/octet-stream").serialize());
+		}
+		else if (client.request().method() == HTTP_METHOD_POST)
+		{
+			if (!route.effective.uploadEnabled)
+			{
+				prepareErrorResponse(
+					client,
+					HTTP_STATUS_FORBIDDEN,
+					route.effective.errorPages,
+					server->root);
+			}
+			else
+			{
+				const UploadHandler handler(route.effective.uploadStore);
+
+				response = handler.handlePost(client.request());
+				if (isErrorStatusCode(response.statusCode()))
+				{
+					prepareErrorResponse(
+						client,
+						response.statusCode(),
+						route.effective.errorPages,
+						server->root);
+				}
+				else
+					client.setOutput(response.serialize());
+			}
 		}
 		else if (client.request().method() != HTTP_METHOD_GET)
 		{
