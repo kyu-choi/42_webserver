@@ -1,4 +1,5 @@
 #include "webserv/EventLoop.hpp"
+#include "webserv/DeleteHandler.hpp"
 #include "webserv/ErrorPageHandler.hpp"
 #include "webserv/ResponseBuilder.hpp"
 #include "webserv/Router.hpp"
@@ -535,6 +536,36 @@ namespace webserv
 				const UploadHandler handler(route.effective.uploadStore);
 
 				response = handler.handlePost(client.request());
+				if (isErrorStatusCode(response.statusCode()))
+				{
+					prepareErrorResponse(
+						client,
+						response.statusCode(),
+						route.effective.errorPages,
+						server->root);
+				}
+				else
+					client.setOutput(response.serialize());
+			}
+		}
+		else if (client.request().method() == HTTP_METHOD_DELETE)
+		{
+			const DeleteHandler handler;
+
+			if (route.uriPath.size() > 1
+				&& route.uriPath[route.uriPath.size() - 1] == '/')
+			{
+				prepareErrorResponse(
+					client,
+					HTTP_STATUS_FORBIDDEN,
+					route.effective.errorPages,
+					server->root);
+			}
+			else
+			{
+				response = handler.handleDelete(
+					route.filesystemPath,
+					route.relativePath);
 				if (isErrorStatusCode(response.statusCode()))
 				{
 					prepareErrorResponse(

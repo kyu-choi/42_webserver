@@ -39,7 +39,7 @@ int main(int argc, char** argv)
 
 		const std::string configPath = selectConfigPath(argc, argv);
 
-		std::cout << "webserv STEP13 upload server" << std::endl;
+		std::cout << "webserv STEP14 delete server" << std::endl;
 		std::cout << "config: " << configPath << std::endl;
 
 		webserv::ConfigParser parser;

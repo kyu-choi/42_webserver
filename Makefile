@@ -15,6 +15,7 @@ SRCS := \
 	$(SRC_DIR)/core/EventLoop.cpp \
 	$(SRC_DIR)/core/Server.cpp \
 	$(SRC_DIR)/core/StateMachine.cpp \
+	$(SRC_DIR)/handlers/DeleteHandler.cpp \
 	$(SRC_DIR)/handlers/ErrorPageHandler.cpp \
 	$(SRC_DIR)/handlers/StaticFileHandler.cpp \
 	$(SRC_DIR)/handlers/UploadHandler.cpp \
