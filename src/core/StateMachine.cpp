@@ -49,6 +49,8 @@ namespace webserv
 				return ("BODY_CHUNK_DATA");
 			case PARSER_BODY_CHUNK_CRLF:
 				return ("BODY_CHUNK_CRLF");
+			case PARSER_BODY_CHUNK_TRAILERS:
+				return ("BODY_CHUNK_TRAILERS");
 			case PARSER_COMPLETE:
 				return ("COMPLETE");
 			case PARSER_ERROR:

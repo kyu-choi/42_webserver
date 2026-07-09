@@ -102,13 +102,13 @@ namespace
 		return (request.body().size() > clientMaxBodySize);
 	}
 
-	std::size_t receivedBodyBytes(const std::string& input)
+	bool parserStateReadsBody(webserv::RequestParserState state)
 	{
-		const std::size_t headerEnd = input.find("\r\n\r\n");
-
-		if (headerEnd == std::string::npos)
-			return (0);
-		return (input.size() - (headerEnd + 4));
+		return (state == webserv::PARSER_BODY_BY_LENGTH
+			|| state == webserv::PARSER_BODY_CHUNK_SIZE
+			|| state == webserv::PARSER_BODY_CHUNK_DATA
+			|| state == webserv::PARSER_BODY_CHUNK_CRLF
+			|| state == webserv::PARSER_BODY_CHUNK_TRAILERS);
 	}
 }
 
@@ -381,7 +381,7 @@ namespace webserv
 		result = client.parser().parse(client.inputBuffer(), client.request());
 		if (result == RequestParser::PARSE_INCOMPLETE)
 		{
-			if (client.parser().state() == PARSER_BODY_BY_LENGTH)
+			if (parserStateReadsBody(client.parser().state()))
 			{
 				client.setState(CLIENT_READING_BODY);
 				prepareEarlyBodyLimitResponse(client);
@@ -410,7 +410,7 @@ namespace webserv
 		const ServerConfig* server;
 		RouteResult route;
 
-		if (!client.request().hasContentLength())
+		if (client.request().bodyFraming() == HttpRequest::BODY_NONE)
 			return (false);
 		server = serverForClient(client);
 		if (server == 0)
@@ -443,9 +443,7 @@ namespace webserv
 				server->root);
 			return (true);
 		}
-		if (client.request().contentLength() > route.effective.clientMaxBodySize
-			|| receivedBodyBytes(client.inputBuffer())
-				> route.effective.clientMaxBodySize)
+		if (bodyTooLarge(client.request(), route.effective.clientMaxBodySize))
 		{
 			prepareErrorResponse(
 				client,

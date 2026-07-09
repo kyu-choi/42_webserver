@@ -77,6 +77,47 @@ namespace
 		}
 		return (true);
 	}
+
+	bool isHexDigit(char value)
+	{
+		return ((value >= '0' && value <= '9')
+			|| (value >= 'a' && value <= 'f')
+			|| (value >= 'A' && value <= 'F'));
+	}
+
+	int hexDigitValue(char value)
+	{
+		if (value >= '0' && value <= '9')
+			return (value - '0');
+		if (value >= 'a' && value <= 'f')
+			return (value - 'a' + 10);
+		if (value >= 'A' && value <= 'F')
+			return (value - 'A' + 10);
+		return (0);
+	}
+
+	bool parseChunkSizeLine(const std::string& line, std::size_t& parsed)
+	{
+		const std::size_t max = std::numeric_limits<std::size_t>::max();
+		std::string sizePart;
+
+		sizePart = line.substr(0, line.find(';'));
+		sizePart = trim(sizePart);
+		if (sizePart.empty())
+			return (false);
+		parsed = 0;
+		for (std::size_t i = 0; i < sizePart.size(); ++i)
+		{
+			if (!isHexDigit(sizePart[i]))
+				return (false);
+			const std::size_t digit =
+				static_cast<std::size_t>(hexDigitValue(sizePart[i]));
+			if (parsed > (max - digit) / 16)
+				return (false);
+			parsed = parsed * 16 + digit;
+		}
+		return (true);
+	}
 }
 
 namespace webserv
@@ -92,6 +133,7 @@ namespace webserv
 	{
 		const std::size_t headerEnd = input.find("\r\n\r\n");
 		std::size_t expectedBodySize;
+		bool hasChunkedBody;
 		Result result;
 
 		_consumedBytes = 0;
@@ -130,17 +172,28 @@ namespace webserv
 		}
 		_state = PARSER_HEADERS;
 		expectedBodySize = 0;
+		hasChunkedBody = false;
 		result = parseHeaders(
 				input.substr(requestLineEnd + 2,
 					headerEnd - (requestLineEnd + 2)),
 				request,
-				expectedBodySize);
+				expectedBodySize,
+				hasChunkedBody);
 		if (result != PARSE_COMPLETE)
 		{
 			request.setErrorStatus(_errorStatus);
 			return (result);
 		}
-		if (request.hasContentLength())
+		if (hasChunkedBody)
+		{
+			result = parseChunkedBody(input, headerEnd + 4, request);
+			if (result != PARSE_COMPLETE)
+			{
+				request.setErrorStatus(_errorStatus);
+				return (result);
+			}
+		}
+		else if (request.hasContentLength())
 		{
 			const std::size_t bodyStart = headerEnd + 4;
 
@@ -234,17 +287,21 @@ namespace webserv
 	RequestParser::Result RequestParser::parseHeaders(
 		const std::string& headerBlock,
 		HttpRequest& request,
-		std::size_t& expectedBodySize)
+		std::size_t& expectedBodySize,
+		bool& hasChunkedBody)
 	{
 		std::size_t start;
 		std::size_t end;
 		bool hasHost;
 		bool hasContentLength;
+		bool hasTransferEncoding;
 		std::size_t contentLength;
 
 		start = 0;
 		hasHost = false;
 		hasContentLength = false;
+		hasTransferEncoding = false;
+		hasChunkedBody = false;
 		contentLength = 0;
 		while (start < headerBlock.size())
 		{
@@ -281,6 +338,11 @@ namespace webserv
 			{
 				std::size_t parsedLength;
 
+				if (hasTransferEncoding)
+				{
+					setError(HTTP_STATUS_BAD_REQUEST);
+					return (PARSE_ERROR);
+				}
 				if (!parseSizeValue(value, parsedLength))
 				{
 					setError(HTTP_STATUS_BAD_REQUEST);
@@ -294,15 +356,26 @@ namespace webserv
 				hasContentLength = true;
 				contentLength = parsedLength;
 			}
-			else if (lowered == "transfer-encoding"
-				&& lowerString(value).find("chunked") != std::string::npos)
+			else if (lowered == "transfer-encoding")
 			{
-				request.setBodyFraming(HttpRequest::BODY_CHUNKED);
 				if (hasContentLength)
+				{
 					setError(HTTP_STATUS_BAD_REQUEST);
-				else
+					return (PARSE_ERROR);
+				}
+				if (hasTransferEncoding)
+				{
+					setError(HTTP_STATUS_BAD_REQUEST);
+					return (PARSE_ERROR);
+				}
+				hasTransferEncoding = true;
+				if (trim(lowerString(value)) != "chunked")
+				{
 					setError(HTTP_STATUS_NOT_IMPLEMENTED);
-				return (PARSE_ERROR);
+					return (PARSE_ERROR);
+				}
+				request.setBodyFraming(HttpRequest::BODY_CHUNKED);
+				hasChunkedBody = true;
 			}
 			request.addHeader(name, value);
 			start = end;
@@ -320,6 +393,81 @@ namespace webserv
 			expectedBodySize = contentLength;
 		}
 		return (PARSE_COMPLETE);
+	}
+
+	RequestParser::Result RequestParser::parseChunkedBody(
+		const std::string& input,
+		std::size_t bodyStart,
+		HttpRequest& request)
+	{
+		std::size_t position;
+		std::string decodedBody;
+
+		position = bodyStart;
+		while (true)
+		{
+			std::size_t lineEnd;
+			std::size_t chunkSize;
+
+			_state = PARSER_BODY_CHUNK_SIZE;
+			lineEnd = input.find("\r\n", position);
+			if (lineEnd == std::string::npos)
+			{
+				request.setBody(decodedBody);
+				return (PARSE_INCOMPLETE);
+			}
+			if (!parseChunkSizeLine(
+					input.substr(position, lineEnd - position),
+					chunkSize))
+			{
+				setError(HTTP_STATUS_BAD_REQUEST);
+				return (PARSE_ERROR);
+			}
+			position = lineEnd + 2;
+			if (chunkSize == 0)
+			{
+				_state = PARSER_BODY_CHUNK_TRAILERS;
+				if (input.size() - position >= 2
+					&& input.compare(position, 2, "\r\n") == 0)
+				{
+					request.setBody(decodedBody);
+					_consumedBytes = position + 2;
+					_state = PARSER_COMPLETE;
+					return (PARSE_COMPLETE);
+				}
+				const std::size_t trailerEnd = input.find("\r\n\r\n", position);
+
+				if (trailerEnd == std::string::npos)
+				{
+					request.setBody(decodedBody);
+					return (PARSE_INCOMPLETE);
+				}
+				request.setBody(decodedBody);
+				_consumedBytes = trailerEnd + 4;
+				_state = PARSER_COMPLETE;
+				return (PARSE_COMPLETE);
+			}
+			_state = PARSER_BODY_CHUNK_DATA;
+			if (input.size() - position < chunkSize)
+			{
+				request.setBody(decodedBody);
+				return (PARSE_INCOMPLETE);
+			}
+			decodedBody.append(input, position, chunkSize);
+			position += chunkSize;
+			_state = PARSER_BODY_CHUNK_CRLF;
+			if (input.size() - position < 2)
+			{
+				request.setBody(decodedBody);
+				return (PARSE_INCOMPLETE);
+			}
+			if (input.compare(position, 2, "\r\n") != 0)
+			{
+				setError(HTTP_STATUS_BAD_REQUEST);
+				return (PARSE_ERROR);
+			}
+			position += 2;
+		}
 	}
 
 	void RequestParser::setError(int status)

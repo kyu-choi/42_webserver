@@ -37,7 +37,12 @@ namespace webserv
 		Result	parseHeaders(
 					const std::string& headerBlock,
 					HttpRequest& request,
-					std::size_t& expectedBodySize);
+					std::size_t& expectedBodySize,
+					bool& hasChunkedBody);
+		Result	parseChunkedBody(
+					const std::string& input,
+					std::size_t bodyStart,
+					HttpRequest& request);
 		void	setError(int status);
 	};
 }
