@@ -351,11 +351,7 @@ namespace webserv
 				kPollTimeoutMs);
 
 			if (ready < 0)
-			{
-				if (errno == EINTR)
-					continue;
-				throw std::runtime_error(systemError("poll"));
-			}
+				continue;
 			closeTimedOutClients();
 			checkCgiJobs();
 			if (ready == 0)
@@ -378,7 +374,12 @@ namespace webserv
 				if (isListenFd(fd))
 				{
 					if ((events & (POLLERR | POLLHUP | POLLNVAL)) != 0)
-						throw std::runtime_error("listen socket poll error");
+					{
+						std::cerr << "webserv: listen socket error on fd "
+								  << fd << std::endl;
+						removeFd(fd);
+						continue;
+					}
 					if ((events & POLLIN) != 0)
 						handleListenEvent(fd);
 				}
@@ -490,37 +491,29 @@ namespace webserv
 
 	void EventLoop::handleListenEvent(int listenFd)
 	{
-		while (true)
-		{
-			int clientFd = accept(listenFd, 0, 0);
+		const int clientFd = accept(listenFd, 0, 0);
 
-			if (clientFd < 0)
-			{
-				if (errno == EINTR)
-					continue;
-				if (errno == EAGAIN || errno == EWOULDBLOCK)
-					return;
-				throw std::runtime_error(systemError("accept"));
-			}
-			try
-			{
-				if (_clients.size() >= kMaxClients)
-				{
-					closeFd(clientFd);
-					continue;
-				}
-				setNonBlocking(clientFd);
-				_clients.insert(std::make_pair(clientFd,
-						Client(clientFd, listenFd)));
-				addFd(clientFd, POLLIN);
-				std::cout << "accepted client fd " << clientFd
-						  << " from listen fd " << listenFd << std::endl;
-			}
-			catch (...)
-			{
-				closeFd(clientFd);
-				throw;
-			}
+		if (clientFd < 0)
+			return;
+		if (_clients.size() >= kMaxClients)
+		{
+			closeFd(clientFd);
+			return;
+		}
+		try
+		{
+			setNonBlocking(clientFd);
+			_clients.insert(std::make_pair(clientFd,
+					Client(clientFd, listenFd)));
+			addFd(clientFd, POLLIN);
+			std::cout << "accepted client fd " << clientFd
+					  << " from listen fd " << listenFd << std::endl;
+		}
+		catch (...)
+		{
+			_clients.erase(clientFd);
+			removeFd(clientFd);
+			closeFd(clientFd);
 		}
 	}
 
