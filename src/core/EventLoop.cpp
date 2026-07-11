@@ -138,6 +138,20 @@ namespace
 		return (value.substr(begin, end - begin));
 	}
 
+	std::string lowerString(const std::string& value)
+	{
+		std::string result;
+
+		for (std::size_t i = 0; i < value.size(); ++i)
+		{
+			if (value[i] >= 'A' && value[i] <= 'Z')
+				result += static_cast<char>(value[i] - 'A' + 'a');
+			else
+				result += value[i];
+		}
+		return (result);
+	}
+
 	std::string numberToString(unsigned long value)
 	{
 		std::ostringstream stream;
@@ -571,6 +585,12 @@ namespace webserv
 		client.advanceSendOffset(static_cast<std::size_t>(sent));
 		if (client.hasPendingOutput())
 			return;
+		if (clientStateCanRead(client.state()))
+		{
+			client.clearOutput();
+			updateEvents(fd, client.desiredPollEvents());
+			return;
+		}
 		client.markClosing();
 		closeClient(fd);
 	}
@@ -675,7 +695,8 @@ namespace webserv
 			if (parserStateReadsBody(client.parser().state()))
 			{
 				client.setState(CLIENT_READING_BODY);
-				prepareEarlyBodyLimitResponse(client);
+				if (!prepareEarlyBodyLimitResponse(client))
+					prepareContinueResponse(client);
 			}
 			else
 				client.setState(CLIENT_READING_HEADERS);
@@ -694,6 +715,19 @@ namespace webserv
 		client.setState(CLIENT_PROCESSING_REQUEST);
 		prepareSuccessResponse(client);
 		client.parser().reset();
+	}
+
+	void EventLoop::prepareContinueResponse(Client& client)
+	{
+		if (client.continueSent())
+			return;
+		if (client.request().version() != "HTTP/1.1")
+			return;
+		if (trim(lowerString(client.request().header("Expect")))
+			!= "100-continue")
+			return;
+		client.setContinueSent(true);
+		client.setInterimOutput("HTTP/1.1 100 Continue\r\n\r\n");
 	}
 
 	bool EventLoop::prepareEarlyBodyLimitResponse(Client& client)

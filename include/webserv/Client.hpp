@@ -32,11 +32,15 @@ namespace webserv
 		std::size_t	pendingOutputSize() const;
 		const char*	pendingOutputData() const;
 		void	setOutput(const std::string& response);
+		void	setInterimOutput(const std::string& response);
+		void	clearOutput();
 		void	advanceSendOffset(std::size_t sentBytes);
 		bool	outputComplete() const;
 		void	setState(ClientState state);
 		void	markClosing();
 		void	touch();
+		bool	continueSent() const;
+		void	setContinueSent(bool sent);
 		short	desiredPollEvents() const;
 
 	private:
@@ -50,6 +54,7 @@ namespace webserv
 		ClientState		_state;
 		std::time_t		_lastActivity;
 		bool			_closing;
+		bool			_continueSent;
 	};
 }
 

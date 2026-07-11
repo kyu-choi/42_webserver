@@ -13,7 +13,8 @@ namespace webserv
 		  _parser(),
 		  _state(CLIENT_READING_HEADERS),
 		  _lastActivity(std::time(0)),
-		  _closing(false)
+		  _closing(false),
+		  _continueSent(false)
 	{
 	}
 
@@ -110,6 +111,20 @@ namespace webserv
 		touch();
 	}
 
+	void Client::setInterimOutput(const std::string& response)
+	{
+		_outputBuffer = response;
+		_sendOffset = 0;
+		touch();
+	}
+
+	void Client::clearOutput()
+	{
+		_outputBuffer.clear();
+		_sendOffset = 0;
+		touch();
+	}
+
 	void Client::advanceSendOffset(std::size_t sentBytes)
 	{
 		_sendOffset += sentBytes;
@@ -141,14 +156,24 @@ namespace webserv
 		_lastActivity = std::time(0);
 	}
 
+	bool Client::continueSent() const
+	{
+		return (_continueSent);
+	}
+
+	void Client::setContinueSent(bool sent)
+	{
+		_continueSent = sent;
+	}
+
 	short Client::desiredPollEvents() const
 	{
 		if (_closing || _state == CLIENT_CLOSING)
 			return (0);
+		if (hasPendingOutput())
+			return (POLLOUT);
 		if (clientStateCanRead(_state))
 			return (POLLIN);
-		if (clientStateCanWrite(_state) && hasPendingOutput())
-			return (POLLOUT);
 		return (0);
 	}
 }

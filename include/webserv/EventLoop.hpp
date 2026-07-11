@@ -93,6 +93,7 @@ namespace webserv
 		void	handleCgiWrite(CgiJob& job);
 		void	handleCgiRead(CgiJob& job);
 		void	processClientInput(Client& client);
+		void	prepareContinueResponse(Client& client);
 		bool	prepareEarlyBodyLimitResponse(Client& client);
 		void	prepareSuccessResponse(Client& client);
 		void	prepareSessionResponse(Client& client);
