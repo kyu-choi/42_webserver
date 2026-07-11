@@ -21,7 +21,7 @@
 
 namespace
 {
-	const std::size_t kBufferSize = 4096;
+	const std::size_t kBufferSize = 65536;
 	const std::size_t kMaxClients = 1024;
 	const std::size_t kMaxRawInputBufferSize = 64 * 1024 * 1024;
 	const std::size_t kMaxCgiOutputSize = 10 * 1024 * 1024;
@@ -216,15 +216,12 @@ namespace
 		{
 			const ssize_t result = read(fd, bytes + filled, length - filled);
 
-			if (result > 0)
+			if (result <= 0)
 			{
-				filled += static_cast<std::size_t>(result);
-				continue;
+				close(fd);
+				return (false);
 			}
-			if (result < 0 && errno == EINTR)
-				continue;
-			close(fd);
-			return (false);
+			filled += static_cast<std::size_t>(result);
 		}
 		close(fd);
 		return (true);
@@ -532,47 +529,28 @@ namespace webserv
 		std::map<int, Client>::iterator	it;
 		Client*							client;
 		char							buffer[kBufferSize];
-		bool							receivedAny;
 
 		it = _clients.find(fd);
 		if (it == _clients.end())
 			return;
 		client = &it->second;
-		receivedAny = false;
-		while (true)
-		{
-			const ssize_t received = recv(fd, buffer, sizeof(buffer), 0);
+		const ssize_t received = recv(fd, buffer, sizeof(buffer), 0);
 
-			if (received > 0)
-			{
-				client->appendInput(buffer, static_cast<std::size_t>(received));
-				receivedAny = true;
-				continue;
-			}
-			if (received == 0)
-			{
-				closeClient(fd);
-				return;
-			}
-			if (errno == EINTR)
-				continue;
-			if (errno == EAGAIN || errno == EWOULDBLOCK)
-				break;
+		if (received <= 0)
+		{
 			closeClient(fd);
 			return;
 		}
-		if (receivedAny)
+		client->appendInput(buffer, static_cast<std::size_t>(received));
+		if (client->inputBuffer().size() > kMaxRawInputBufferSize)
 		{
-			if (client->inputBuffer().size() > kMaxRawInputBufferSize)
-			{
-				prepareErrorResponse(*client, HTTP_STATUS_PAYLOAD_TOO_LARGE);
-			}
-			else
-			{
-				processClientInput(*client);
-			}
-			updateEvents(fd, client->desiredPollEvents());
+			prepareErrorResponse(*client, HTTP_STATUS_PAYLOAD_TOO_LARGE);
 		}
+		else
+		{
+			processClientInput(*client);
+		}
+		updateEvents(fd, client->desiredPollEvents());
 	}
 
 	void EventLoop::handleClientWrite(int fd)
@@ -588,26 +566,18 @@ namespace webserv
 			updateEvents(fd, client.desiredPollEvents());
 			return;
 		}
-		while (client.hasPendingOutput())
+		const ssize_t sent = send(fd,
+				client.pendingOutputData(),
+				client.pendingOutputSize(),
+				0);
+		if (sent <= 0)
 		{
-			const ssize_t sent = send(fd,
-					client.pendingOutputData(),
-					client.pendingOutputSize(),
-					0);
-			if (sent > 0)
-			{
-				client.advanceSendOffset(static_cast<std::size_t>(sent));
-				continue;
-			}
-			if (sent == 0)
-				break;
-			if (errno == EINTR)
-				continue;
-			if (errno == EAGAIN || errno == EWOULDBLOCK)
-				return;
 			closeClient(fd);
 			return;
 		}
+		client.advanceSendOffset(static_cast<std::size_t>(sent));
+		if (client.hasPendingOutput())
+			return;
 		client.markClosing();
 		closeClient(fd);
 	}
@@ -655,7 +625,7 @@ namespace webserv
 
 	void EventLoop::handleCgiWrite(CgiJob& job)
 	{
-		while (job.stdinFd >= 0
+		if (job.stdinFd >= 0
 			&& job.stdinOffset < job.requestBody.size())
 		{
 			const ssize_t written = write(
@@ -663,20 +633,13 @@ namespace webserv
 				job.requestBody.data() + job.stdinOffset,
 				job.requestBody.size() - job.stdinOffset);
 
-			if (written > 0)
+			if (written <= 0)
 			{
-				job.stdinOffset += static_cast<std::size_t>(written);
-				continue;
-			}
-			if (written == 0)
-				break;
-			if (errno == EINTR)
-				continue;
-			if (errno == EAGAIN || errno == EWOULDBLOCK)
+				closeCgiFd(job, job.stdinFd);
+				job.stdinClosed = true;
 				return;
-			closeCgiFd(job, job.stdinFd);
-			job.stdinClosed = true;
-			return;
+			}
+			job.stdinOffset += static_cast<std::size_t>(written);
 		}
 		if (job.stdinOffset >= job.requestBody.size())
 		{
@@ -689,36 +652,24 @@ namespace webserv
 	{
 		char buffer[kBufferSize];
 
-		while (job.stdoutFd >= 0)
-		{
-			const ssize_t bytesRead = read(job.stdoutFd, buffer, sizeof(buffer));
+		if (job.stdoutFd < 0)
+			return;
+		const ssize_t bytesRead = read(job.stdoutFd, buffer, sizeof(buffer));
 
-			if (bytesRead > 0)
-			{
-				job.output.append(buffer, static_cast<std::size_t>(bytesRead));
-				if (job.output.size() > kMaxCgiOutputSize)
-				{
-					failCgiJob(
-						job.clientFd,
-						HTTP_STATUS_BAD_GATEWAY,
-						true);
-					return;
-				}
-				continue;
-			}
-			if (bytesRead == 0)
-			{
-				closeCgiFd(job, job.stdoutFd);
-				job.stdoutClosed = true;
-				return;
-			}
-			if (errno == EINTR)
-				continue;
-			if (errno == EAGAIN || errno == EWOULDBLOCK)
-				return;
+		if (bytesRead < 0)
+		{
 			failCgiJob(job.clientFd, HTTP_STATUS_BAD_GATEWAY, true);
 			return;
 		}
+		if (bytesRead == 0)
+		{
+			closeCgiFd(job, job.stdoutFd);
+			job.stdoutClosed = true;
+			return;
+		}
+		job.output.append(buffer, static_cast<std::size_t>(bytesRead));
+		if (job.output.size() > kMaxCgiOutputSize)
+			failCgiJob(job.clientFd, HTTP_STATUS_BAD_GATEWAY, true);
 	}
 
 	void EventLoop::processClientInput(Client& client)

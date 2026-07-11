@@ -193,8 +193,6 @@ namespace webserv
 			}
 			if (bytesRead == 0)
 				break;
-			if (errno == EINTR)
-				continue;
 			close(fd);
 			return (ResponseBuilder::error(HTTP_STATUS_INTERNAL_SERVER_ERROR));
 		}
