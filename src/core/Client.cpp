@@ -3,9 +3,10 @@
 
 namespace webserv
 {
-	Client::Client(int fd, int listenFd)
+	Client::Client(int fd, int listenFd, const std::string& remoteAddr)
 		: _fd(fd),
 		  _listenFd(listenFd),
+		  _remoteAddr(remoteAddr),
 		  _inputBuffer(),
 		  _outputBuffer(),
 		  _sendOffset(0),
@@ -26,6 +27,11 @@ namespace webserv
 	int Client::listenFd() const
 	{
 		return (_listenFd);
+	}
+
+	const std::string& Client::remoteAddr() const
+	{
+		return (_remoteAddr);
 	}
 
 	ClientState Client::state() const

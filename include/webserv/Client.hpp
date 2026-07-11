@@ -12,10 +12,11 @@ namespace webserv
 	class Client
 	{
 	public:
-		Client(int fd, int listenFd);
+		Client(int fd, int listenFd, const std::string& remoteAddr);
 
 		int					fd() const;
 		int					listenFd() const;
+		const std::string&	remoteAddr() const;
 		ClientState			state() const;
 		std::time_t			lastActivity() const;
 		const std::string&	inputBuffer() const;
@@ -46,6 +47,7 @@ namespace webserv
 	private:
 		int				_fd;
 		int				_listenFd;
+		std::string		_remoteAddr;
 		std::string		_inputBuffer;
 		std::string		_outputBuffer;
 		std::size_t		_sendOffset;

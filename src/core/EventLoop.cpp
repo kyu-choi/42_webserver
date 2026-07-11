@@ -12,6 +12,7 @@
 #include <fcntl.h>
 #include <iomanip>
 #include <iostream>
+#include <netinet/in.h>
 #include <signal.h>
 #include <sstream>
 #include <stdexcept>
@@ -157,6 +158,19 @@ namespace
 		std::ostringstream stream;
 
 		stream << value;
+		return (stream.str());
+	}
+
+	std::string ipv4ToString(const struct sockaddr_in& address)
+	{
+		const unsigned char* octets = reinterpret_cast<const unsigned char*>(
+			&address.sin_addr);
+		std::ostringstream stream;
+
+		stream << static_cast<int>(octets[0]) << "."
+			   << static_cast<int>(octets[1]) << "."
+			   << static_cast<int>(octets[2]) << "."
+			   << static_cast<int>(octets[3]);
 		return (stream.str());
 	}
 
@@ -505,7 +519,13 @@ namespace webserv
 
 	void EventLoop::handleListenEvent(int listenFd)
 	{
-		const int clientFd = accept(listenFd, 0, 0);
+		struct sockaddr_in remoteAddress;
+		socklen_t remoteLength = sizeof(remoteAddress);
+
+		std::memset(&remoteAddress, 0, sizeof(remoteAddress));
+		const int clientFd = accept(listenFd,
+				reinterpret_cast<struct sockaddr*>(&remoteAddress),
+				&remoteLength);
 
 		if (clientFd < 0)
 			return;
@@ -518,7 +538,7 @@ namespace webserv
 		{
 			setNonBlocking(clientFd);
 			_clients.insert(std::make_pair(clientFd,
-					Client(clientFd, listenFd)));
+					Client(clientFd, listenFd, ipv4ToString(remoteAddress))));
 			addFd(clientFd, POLLIN);
 			std::cout << "accepted client fd " << clientFd
 					  << " from listen fd " << listenFd << std::endl;
@@ -1058,9 +1078,24 @@ namespace webserv
 		const RouteResult& route,
 		const ServerConfig& server)
 	{
+		CgiNetworkInfo network;
+		struct sockaddr_in localAddress;
+		socklen_t localLength = sizeof(localAddress);
+
+		network.remoteAddr = client.remoteAddr();
+		std::memset(&localAddress, 0, sizeof(localAddress));
+		if (getsockname(client.fd(),
+				reinterpret_cast<struct sockaddr*>(&localAddress),
+				&localLength) == 0
+			&& localAddress.sin_family == AF_INET)
+		{
+			network.serverAddr = ipv4ToString(localAddress);
+			network.serverPort = numberToString(ntohs(localAddress.sin_port));
+		}
 		const CgiExecution execution = CgiHandler::start(
 			client.request(),
-			route);
+			route,
+			network);
 
 		if (!execution.ok)
 		{

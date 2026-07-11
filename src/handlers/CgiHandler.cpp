@@ -126,15 +126,34 @@ namespace
 		env.push_back(entry);
 	}
 
+	std::string hostWithoutPort(const std::string& hostHeader)
+	{
+		const std::string trimmed = trim(hostHeader);
+		const std::size_t colon = trimmed.find(':');
+
+		if (colon == std::string::npos)
+			return (trimmed);
+		return (trimmed.substr(0, colon));
+	}
+
 	std::vector<std::string> buildEnvironment(
 		const webserv::HttpRequest& request,
-		const webserv::RouteResult& route)
+		const webserv::RouteResult& route,
+		const webserv::CgiNetworkInfo& network)
 	{
 		std::vector<std::string> env;
 		const std::map<std::string, std::string>& headers = request.headers();
+		std::string serverName = hostWithoutPort(request.header("Host"));
 
+		if (serverName.empty())
+			serverName = network.serverAddr;
+		if (serverName.empty())
+			serverName = "localhost";
 		addEnv(env, "GATEWAY_INTERFACE=CGI/1.1");
 		addEnv(env, "SERVER_SOFTWARE=webserv");
+		addEnv(env, "SERVER_NAME=" + serverName);
+		addEnv(env, "SERVER_PORT=" + network.serverPort);
+		addEnv(env, "REMOTE_ADDR=" + network.remoteAddr);
 		addEnv(env, "REQUEST_METHOD=" + std::string(
 				webserv::httpMethodName(request.method())));
 		addEnv(env, "SCRIPT_NAME=" + route.uriPath);
@@ -143,8 +162,8 @@ namespace
 		addEnv(env, "CONTENT_LENGTH=" + numberToString(request.body().size()));
 		addEnv(env, "CONTENT_TYPE=" + request.header("Content-Type"));
 		addEnv(env, "SERVER_PROTOCOL=" + request.version());
-		addEnv(env, "PATH_INFO=");
-		addEnv(env, "PATH_TRANSLATED=");
+		addEnv(env, "PATH_INFO=" + route.uriPath);
+		addEnv(env, "PATH_TRANSLATED=" + route.filesystemPath);
 		addEnv(env, "DOCUMENT_ROOT=" + route.effective.root);
 		addEnv(env, "REDIRECT_STATUS=200");
 		for (std::map<std::string, std::string>::const_iterator it =
@@ -338,7 +357,8 @@ namespace webserv
 
 	CgiExecution CgiHandler::start(
 		const HttpRequest& request,
-		const RouteResult& route)
+		const RouteResult& route,
+		const CgiNetworkInfo& network)
 	{
 		CgiExecution execution;
 		const std::string extension = extensionForPath(route.filesystemPath);
@@ -375,7 +395,7 @@ namespace webserv
 			closePipePair(stdinPipe);
 			return (execution);
 		}
-		envValues = buildEnvironment(request, route);
+		envValues = buildEnvironment(request, route, network);
 		execution.pid = fork();
 		if (execution.pid < 0)
 		{
