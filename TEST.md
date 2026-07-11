@@ -18,8 +18,8 @@
 - [x] 실행 시 config 파일 인자를 0개 또는 1개 받을 수 있다.
 - [x] 인자가 없으면 `config/default.conf`를 사용한다.
 - [x] `README.md`는 repository root에 있다.
-- [~] 현재 `README.md`는 사용자가 요청한 이전 단계의 한국어 설명용 README이다.
-- [~] 42 subject가 영어 README를 요구하는 평가 환경이라면, 제출 직전 영어 공식 README가 필요한지 다시 확인해야 한다.
+- [x] `README.md`는 영어 공식 README이며 subject가 요구하는 첫 줄 이탤릭 문구와 Description/Instructions/Resources(AI 사용 방식 포함) 섹션을 갖춘다.
+- [x] 한국어 참고 문서는 `README_KO.md`로 유지한다.
 - [~] 최종 제출 전 현재 디렉토리가 실제 제출할 Git repository root인지 확인한다.
 
 ## Mandatory 런타임 구조
