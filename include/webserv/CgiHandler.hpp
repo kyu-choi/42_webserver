@@ -21,13 +21,21 @@ namespace webserv
 		CgiExecution();
 	};
 
+	struct CgiNetworkInfo
+	{
+		std::string	remoteAddr;
+		std::string	serverAddr;
+		std::string	serverPort;
+	};
+
 	class CgiHandler
 	{
 	public:
 		static bool			isCgiRequest(const RouteResult& route);
 		static CgiExecution	start(
 								const HttpRequest& request,
-								const RouteResult& route);
+								const RouteResult& route,
+								const CgiNetworkInfo& network);
 		static bool			buildResponse(
 								const std::string& output,
 								HttpResponse& response);

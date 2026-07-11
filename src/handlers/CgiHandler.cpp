@@ -21,11 +21,12 @@ namespace
 
 	bool setNonBlocking(int fd)
 	{
-		const int flags = fcntl(fd, F_GETFL, 0);
+		return (fcntl(fd, F_SETFL, O_NONBLOCK) == 0);
+	}
 
-		if (flags < 0)
-			return (false);
-		return (fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0);
+	bool setCloseOnExec(int fd)
+	{
+		return (fcntl(fd, F_SETFD, FD_CLOEXEC) == 0);
 	}
 
 	std::string lowerString(const std::string& value)
@@ -126,15 +127,34 @@ namespace
 		env.push_back(entry);
 	}
 
+	std::string hostWithoutPort(const std::string& hostHeader)
+	{
+		const std::string trimmed = trim(hostHeader);
+		const std::size_t colon = trimmed.find(':');
+
+		if (colon == std::string::npos)
+			return (trimmed);
+		return (trimmed.substr(0, colon));
+	}
+
 	std::vector<std::string> buildEnvironment(
 		const webserv::HttpRequest& request,
-		const webserv::RouteResult& route)
+		const webserv::RouteResult& route,
+		const webserv::CgiNetworkInfo& network)
 	{
 		std::vector<std::string> env;
 		const std::map<std::string, std::string>& headers = request.headers();
+		std::string serverName = hostWithoutPort(request.header("Host"));
 
+		if (serverName.empty())
+			serverName = network.serverAddr;
+		if (serverName.empty())
+			serverName = "localhost";
 		addEnv(env, "GATEWAY_INTERFACE=CGI/1.1");
 		addEnv(env, "SERVER_SOFTWARE=webserv");
+		addEnv(env, "SERVER_NAME=" + serverName);
+		addEnv(env, "SERVER_PORT=" + network.serverPort);
+		addEnv(env, "REMOTE_ADDR=" + network.remoteAddr);
 		addEnv(env, "REQUEST_METHOD=" + std::string(
 				webserv::httpMethodName(request.method())));
 		addEnv(env, "SCRIPT_NAME=" + route.uriPath);
@@ -143,8 +163,8 @@ namespace
 		addEnv(env, "CONTENT_LENGTH=" + numberToString(request.body().size()));
 		addEnv(env, "CONTENT_TYPE=" + request.header("Content-Type"));
 		addEnv(env, "SERVER_PROTOCOL=" + request.version());
-		addEnv(env, "PATH_INFO=");
-		addEnv(env, "PATH_TRANSLATED=");
+		addEnv(env, "PATH_INFO=" + route.uriPath);
+		addEnv(env, "PATH_TRANSLATED=" + route.filesystemPath);
 		addEnv(env, "DOCUMENT_ROOT=" + route.effective.root);
 		addEnv(env, "REDIRECT_STATUS=200");
 		for (std::map<std::string, std::string>::const_iterator it =
@@ -167,17 +187,6 @@ namespace
 		return (result);
 	}
 
-	void closeAllFdsFromThree()
-	{
-		long maxFd;
-
-		maxFd = sysconf(_SC_OPEN_MAX);
-		if (maxFd < 0)
-			maxFd = 1024;
-		for (int fd = 3; fd < maxFd; ++fd)
-			close(fd);
-	}
-
 	void childExec(
 		const std::string& interpreter,
 		const std::string& scriptArgument,
@@ -192,7 +201,6 @@ namespace
 		argvValues.push_back(scriptArgument);
 		argv = cStringArray(argvValues);
 		envp = cStringArray(envValues);
-		closeAllFdsFromThree();
 		if (chdir(scriptDirectory.c_str()) < 0)
 			_exit(127);
 		execve(interpreter.c_str(), &argv[0], &envp[0]);
@@ -338,7 +346,8 @@ namespace webserv
 
 	CgiExecution CgiHandler::start(
 		const HttpRequest& request,
-		const RouteResult& route)
+		const RouteResult& route,
+		const CgiNetworkInfo& network)
 	{
 		CgiExecution execution;
 		const std::string extension = extensionForPath(route.filesystemPath);
@@ -375,7 +384,14 @@ namespace webserv
 			closePipePair(stdinPipe);
 			return (execution);
 		}
-		envValues = buildEnvironment(request, route);
+		if (!setCloseOnExec(stdinPipe[0]) || !setCloseOnExec(stdinPipe[1])
+			|| !setCloseOnExec(stdoutPipe[0]) || !setCloseOnExec(stdoutPipe[1]))
+		{
+			closePipePair(stdinPipe);
+			closePipePair(stdoutPipe);
+			return (execution);
+		}
+		envValues = buildEnvironment(request, route, network);
 		execution.pid = fork();
 		if (execution.pid < 0)
 		{
