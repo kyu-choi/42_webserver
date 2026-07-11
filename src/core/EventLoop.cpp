@@ -46,12 +46,14 @@ namespace
 
 	void setNonBlocking(int fd)
 	{
-		const int flags = fcntl(fd, F_GETFL, 0);
-
-		if (flags < 0)
-			throw std::runtime_error(systemError("fcntl(F_GETFL)"));
-		if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0)
+		if (fcntl(fd, F_SETFL, O_NONBLOCK) < 0)
 			throw std::runtime_error(systemError("fcntl(F_SETFL)"));
+	}
+
+	void setCloseOnExec(int fd)
+	{
+		if (fcntl(fd, F_SETFD, FD_CLOEXEC) < 0)
+			throw std::runtime_error(systemError("fcntl(F_SETFD)"));
 	}
 
 	bool methodAllowed(
@@ -537,6 +539,7 @@ namespace webserv
 		try
 		{
 			setNonBlocking(clientFd);
+			setCloseOnExec(clientFd);
 			_clients.insert(std::make_pair(clientFd,
 					Client(clientFd, listenFd, ipv4ToString(remoteAddress))));
 			addFd(clientFd, POLLIN);

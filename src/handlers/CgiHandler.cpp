@@ -21,11 +21,12 @@ namespace
 
 	bool setNonBlocking(int fd)
 	{
-		const int flags = fcntl(fd, F_GETFL, 0);
+		return (fcntl(fd, F_SETFL, O_NONBLOCK) == 0);
+	}
 
-		if (flags < 0)
-			return (false);
-		return (fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0);
+	bool setCloseOnExec(int fd)
+	{
+		return (fcntl(fd, F_SETFD, FD_CLOEXEC) == 0);
 	}
 
 	std::string lowerString(const std::string& value)
@@ -186,17 +187,6 @@ namespace
 		return (result);
 	}
 
-	void closeAllFdsFromThree()
-	{
-		long maxFd;
-
-		maxFd = sysconf(_SC_OPEN_MAX);
-		if (maxFd < 0)
-			maxFd = 1024;
-		for (int fd = 3; fd < maxFd; ++fd)
-			close(fd);
-	}
-
 	void childExec(
 		const std::string& interpreter,
 		const std::string& scriptArgument,
@@ -211,7 +201,6 @@ namespace
 		argvValues.push_back(scriptArgument);
 		argv = cStringArray(argvValues);
 		envp = cStringArray(envValues);
-		closeAllFdsFromThree();
 		if (chdir(scriptDirectory.c_str()) < 0)
 			_exit(127);
 		execve(interpreter.c_str(), &argv[0], &envp[0]);
@@ -393,6 +382,13 @@ namespace webserv
 		if (pipe(stdoutPipe) < 0)
 		{
 			closePipePair(stdinPipe);
+			return (execution);
+		}
+		if (!setCloseOnExec(stdinPipe[0]) || !setCloseOnExec(stdinPipe[1])
+			|| !setCloseOnExec(stdoutPipe[0]) || !setCloseOnExec(stdoutPipe[1]))
+		{
+			closePipePair(stdinPipe);
+			closePipePair(stdoutPipe);
 			return (execution);
 		}
 		envValues = buildEnvironment(request, route, network);
