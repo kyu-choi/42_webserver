@@ -141,7 +141,8 @@ namespace webserv
 		if (headerEnd == std::string::npos)
 		{
 			_state = PARSER_HEADERS;
-			if (input.size() > kMaxHeaderSize)
+			if (input.find("\n\n") != std::string::npos
+				|| input.size() > kMaxHeaderSize)
 			{
 				setError(HTTP_STATUS_BAD_REQUEST);
 				request.setErrorStatus(_errorStatus);
@@ -173,9 +174,12 @@ namespace webserv
 		_state = PARSER_HEADERS;
 		expectedBodySize = 0;
 		hasChunkedBody = false;
+		std::string headerBlock;
+		if (requestLineEnd + 2 < headerEnd)
+			headerBlock = input.substr(requestLineEnd + 2,
+					headerEnd - (requestLineEnd + 2));
 		result = parseHeaders(
-				input.substr(requestLineEnd + 2,
-					headerEnd - (requestLineEnd + 2)),
+				headerBlock,
 				request,
 				expectedBodySize,
 				hasChunkedBody);
@@ -261,7 +265,7 @@ namespace webserv
 			setError(HTTP_STATUS_BAD_REQUEST);
 			return (PARSE_ERROR);
 		}
-		if (version != "HTTP/1.1")
+		if (version != "HTTP/1.1" && version != "HTTP/1.0")
 		{
 			setError(HTTP_STATUS_HTTP_VERSION_NOT_SUPPORTED);
 			return (PARSE_ERROR);

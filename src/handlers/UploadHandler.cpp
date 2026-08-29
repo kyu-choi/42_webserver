@@ -1,6 +1,5 @@
 #include "webserv/UploadHandler.hpp"
 #include "webserv/ResponseBuilder.hpp"
-#include <cerrno>
 #include <ctime>
 #include <fcntl.h>
 #include <sstream>
@@ -178,14 +177,9 @@ namespace
 				content.data() + written,
 				content.size() - written);
 
-			if (result > 0)
-			{
-				written += static_cast<std::size_t>(result);
-				continue;
-			}
-			if (result < 0 && errno == EINTR)
-				continue;
-			return (false);
+			if (result <= 0)
+				return (false);
+			written += static_cast<std::size_t>(result);
 		}
 		return (true);
 	}

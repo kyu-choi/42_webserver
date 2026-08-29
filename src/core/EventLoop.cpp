@@ -12,6 +12,7 @@
 #include <fcntl.h>
 #include <iomanip>
 #include <iostream>
+#include <netinet/in.h>
 #include <signal.h>
 #include <sstream>
 #include <stdexcept>
@@ -21,7 +22,7 @@
 
 namespace
 {
-	const std::size_t kBufferSize = 4096;
+	const std::size_t kBufferSize = 65536;
 	const std::size_t kMaxClients = 1024;
 	const std::size_t kMaxRawInputBufferSize = 64 * 1024 * 1024;
 	const std::size_t kMaxCgiOutputSize = 10 * 1024 * 1024;
@@ -45,12 +46,14 @@ namespace
 
 	void setNonBlocking(int fd)
 	{
-		const int flags = fcntl(fd, F_GETFL, 0);
-
-		if (flags < 0)
-			throw std::runtime_error(systemError("fcntl(F_GETFL)"));
-		if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0)
+		if (fcntl(fd, F_SETFL, O_NONBLOCK) < 0)
 			throw std::runtime_error(systemError("fcntl(F_SETFL)"));
+	}
+
+	void setCloseOnExec(int fd)
+	{
+		if (fcntl(fd, F_SETFD, FD_CLOEXEC) < 0)
+			throw std::runtime_error(systemError("fcntl(F_SETFD)"));
 	}
 
 	bool methodAllowed(
@@ -138,11 +141,38 @@ namespace
 		return (value.substr(begin, end - begin));
 	}
 
+	std::string lowerString(const std::string& value)
+	{
+		std::string result;
+
+		for (std::size_t i = 0; i < value.size(); ++i)
+		{
+			if (value[i] >= 'A' && value[i] <= 'Z')
+				result += static_cast<char>(value[i] - 'A' + 'a');
+			else
+				result += value[i];
+		}
+		return (result);
+	}
+
 	std::string numberToString(unsigned long value)
 	{
 		std::ostringstream stream;
 
 		stream << value;
+		return (stream.str());
+	}
+
+	std::string ipv4ToString(const struct sockaddr_in& address)
+	{
+		const unsigned char* octets = reinterpret_cast<const unsigned char*>(
+			&address.sin_addr);
+		std::ostringstream stream;
+
+		stream << static_cast<int>(octets[0]) << "."
+			   << static_cast<int>(octets[1]) << "."
+			   << static_cast<int>(octets[2]) << "."
+			   << static_cast<int>(octets[3]);
 		return (stream.str());
 	}
 
@@ -216,15 +246,12 @@ namespace
 		{
 			const ssize_t result = read(fd, bytes + filled, length - filled);
 
-			if (result > 0)
+			if (result <= 0)
 			{
-				filled += static_cast<std::size_t>(result);
-				continue;
+				close(fd);
+				return (false);
 			}
-			if (result < 0 && errno == EINTR)
-				continue;
-			close(fd);
-			return (false);
+			filled += static_cast<std::size_t>(result);
 		}
 		close(fd);
 		return (true);
@@ -354,11 +381,7 @@ namespace webserv
 				kPollTimeoutMs);
 
 			if (ready < 0)
-			{
-				if (errno == EINTR)
-					continue;
-				throw std::runtime_error(systemError("poll"));
-			}
+				continue;
 			closeTimedOutClients();
 			checkCgiJobs();
 			if (ready == 0)
@@ -381,7 +404,12 @@ namespace webserv
 				if (isListenFd(fd))
 				{
 					if ((events & (POLLERR | POLLHUP | POLLNVAL)) != 0)
-						throw std::runtime_error("listen socket poll error");
+					{
+						std::cerr << "webserv: listen socket error on fd "
+								  << fd << std::endl;
+						removeFd(fd);
+						continue;
+					}
 					if ((events & POLLIN) != 0)
 						handleListenEvent(fd);
 				}
@@ -493,37 +521,36 @@ namespace webserv
 
 	void EventLoop::handleListenEvent(int listenFd)
 	{
-		while (true)
-		{
-			int clientFd = accept(listenFd, 0, 0);
+		struct sockaddr_in remoteAddress;
+		socklen_t remoteLength = sizeof(remoteAddress);
 
-			if (clientFd < 0)
-			{
-				if (errno == EINTR)
-					continue;
-				if (errno == EAGAIN || errno == EWOULDBLOCK)
-					return;
-				throw std::runtime_error(systemError("accept"));
-			}
-			try
-			{
-				if (_clients.size() >= kMaxClients)
-				{
-					closeFd(clientFd);
-					continue;
-				}
-				setNonBlocking(clientFd);
-				_clients.insert(std::make_pair(clientFd,
-						Client(clientFd, listenFd)));
-				addFd(clientFd, POLLIN);
-				std::cout << "accepted client fd " << clientFd
-						  << " from listen fd " << listenFd << std::endl;
-			}
-			catch (...)
-			{
-				closeFd(clientFd);
-				throw;
-			}
+		std::memset(&remoteAddress, 0, sizeof(remoteAddress));
+		const int clientFd = accept(listenFd,
+				reinterpret_cast<struct sockaddr*>(&remoteAddress),
+				&remoteLength);
+
+		if (clientFd < 0)
+			return;
+		if (_clients.size() >= kMaxClients)
+		{
+			closeFd(clientFd);
+			return;
+		}
+		try
+		{
+			setNonBlocking(clientFd);
+			setCloseOnExec(clientFd);
+			_clients.insert(std::make_pair(clientFd,
+					Client(clientFd, listenFd, ipv4ToString(remoteAddress))));
+			addFd(clientFd, POLLIN);
+			std::cout << "accepted client fd " << clientFd
+					  << " from listen fd " << listenFd << std::endl;
+		}
+		catch (...)
+		{
+			_clients.erase(clientFd);
+			removeFd(clientFd);
+			closeFd(clientFd);
 		}
 	}
 
@@ -532,47 +559,28 @@ namespace webserv
 		std::map<int, Client>::iterator	it;
 		Client*							client;
 		char							buffer[kBufferSize];
-		bool							receivedAny;
 
 		it = _clients.find(fd);
 		if (it == _clients.end())
 			return;
 		client = &it->second;
-		receivedAny = false;
-		while (true)
-		{
-			const ssize_t received = recv(fd, buffer, sizeof(buffer), 0);
+		const ssize_t received = recv(fd, buffer, sizeof(buffer), 0);
 
-			if (received > 0)
-			{
-				client->appendInput(buffer, static_cast<std::size_t>(received));
-				receivedAny = true;
-				continue;
-			}
-			if (received == 0)
-			{
-				closeClient(fd);
-				return;
-			}
-			if (errno == EINTR)
-				continue;
-			if (errno == EAGAIN || errno == EWOULDBLOCK)
-				break;
+		if (received <= 0)
+		{
 			closeClient(fd);
 			return;
 		}
-		if (receivedAny)
+		client->appendInput(buffer, static_cast<std::size_t>(received));
+		if (client->inputBuffer().size() > kMaxRawInputBufferSize)
 		{
-			if (client->inputBuffer().size() > kMaxRawInputBufferSize)
-			{
-				prepareErrorResponse(*client, HTTP_STATUS_PAYLOAD_TOO_LARGE);
-			}
-			else
-			{
-				processClientInput(*client);
-			}
-			updateEvents(fd, client->desiredPollEvents());
+			prepareErrorResponse(*client, HTTP_STATUS_PAYLOAD_TOO_LARGE);
 		}
+		else
+		{
+			processClientInput(*client);
+		}
+		updateEvents(fd, client->desiredPollEvents());
 	}
 
 	void EventLoop::handleClientWrite(int fd)
@@ -588,24 +596,22 @@ namespace webserv
 			updateEvents(fd, client.desiredPollEvents());
 			return;
 		}
-		while (client.hasPendingOutput())
+		const ssize_t sent = send(fd,
+				client.pendingOutputData(),
+				client.pendingOutputSize(),
+				0);
+		if (sent <= 0)
 		{
-			const ssize_t sent = send(fd,
-					client.pendingOutputData(),
-					client.pendingOutputSize(),
-					0);
-			if (sent > 0)
-			{
-				client.advanceSendOffset(static_cast<std::size_t>(sent));
-				continue;
-			}
-			if (sent == 0)
-				break;
-			if (errno == EINTR)
-				continue;
-			if (errno == EAGAIN || errno == EWOULDBLOCK)
-				return;
 			closeClient(fd);
+			return;
+		}
+		client.advanceSendOffset(static_cast<std::size_t>(sent));
+		if (client.hasPendingOutput())
+			return;
+		if (clientStateCanRead(client.state()))
+		{
+			client.clearOutput();
+			updateEvents(fd, client.desiredPollEvents());
 			return;
 		}
 		client.markClosing();
@@ -655,7 +661,7 @@ namespace webserv
 
 	void EventLoop::handleCgiWrite(CgiJob& job)
 	{
-		while (job.stdinFd >= 0
+		if (job.stdinFd >= 0
 			&& job.stdinOffset < job.requestBody.size())
 		{
 			const ssize_t written = write(
@@ -663,20 +669,13 @@ namespace webserv
 				job.requestBody.data() + job.stdinOffset,
 				job.requestBody.size() - job.stdinOffset);
 
-			if (written > 0)
+			if (written <= 0)
 			{
-				job.stdinOffset += static_cast<std::size_t>(written);
-				continue;
-			}
-			if (written == 0)
-				break;
-			if (errno == EINTR)
-				continue;
-			if (errno == EAGAIN || errno == EWOULDBLOCK)
+				closeCgiFd(job, job.stdinFd);
+				job.stdinClosed = true;
 				return;
-			closeCgiFd(job, job.stdinFd);
-			job.stdinClosed = true;
-			return;
+			}
+			job.stdinOffset += static_cast<std::size_t>(written);
 		}
 		if (job.stdinOffset >= job.requestBody.size())
 		{
@@ -689,36 +688,24 @@ namespace webserv
 	{
 		char buffer[kBufferSize];
 
-		while (job.stdoutFd >= 0)
-		{
-			const ssize_t bytesRead = read(job.stdoutFd, buffer, sizeof(buffer));
+		if (job.stdoutFd < 0)
+			return;
+		const ssize_t bytesRead = read(job.stdoutFd, buffer, sizeof(buffer));
 
-			if (bytesRead > 0)
-			{
-				job.output.append(buffer, static_cast<std::size_t>(bytesRead));
-				if (job.output.size() > kMaxCgiOutputSize)
-				{
-					failCgiJob(
-						job.clientFd,
-						HTTP_STATUS_BAD_GATEWAY,
-						true);
-					return;
-				}
-				continue;
-			}
-			if (bytesRead == 0)
-			{
-				closeCgiFd(job, job.stdoutFd);
-				job.stdoutClosed = true;
-				return;
-			}
-			if (errno == EINTR)
-				continue;
-			if (errno == EAGAIN || errno == EWOULDBLOCK)
-				return;
+		if (bytesRead < 0)
+		{
 			failCgiJob(job.clientFd, HTTP_STATUS_BAD_GATEWAY, true);
 			return;
 		}
+		if (bytesRead == 0)
+		{
+			closeCgiFd(job, job.stdoutFd);
+			job.stdoutClosed = true;
+			return;
+		}
+		job.output.append(buffer, static_cast<std::size_t>(bytesRead));
+		if (job.output.size() > kMaxCgiOutputSize)
+			failCgiJob(job.clientFd, HTTP_STATUS_BAD_GATEWAY, true);
 	}
 
 	void EventLoop::processClientInput(Client& client)
@@ -731,7 +718,8 @@ namespace webserv
 			if (parserStateReadsBody(client.parser().state()))
 			{
 				client.setState(CLIENT_READING_BODY);
-				prepareEarlyBodyLimitResponse(client);
+				if (!prepareEarlyBodyLimitResponse(client))
+					prepareContinueResponse(client);
 			}
 			else
 				client.setState(CLIENT_READING_HEADERS);
@@ -750,6 +738,19 @@ namespace webserv
 		client.setState(CLIENT_PROCESSING_REQUEST);
 		prepareSuccessResponse(client);
 		client.parser().reset();
+	}
+
+	void EventLoop::prepareContinueResponse(Client& client)
+	{
+		if (client.continueSent())
+			return;
+		if (client.request().version() != "HTTP/1.1")
+			return;
+		if (trim(lowerString(client.request().header("Expect")))
+			!= "100-continue")
+			return;
+		client.setContinueSent(true);
+		client.setInterimOutput("HTTP/1.1 100 Continue\r\n\r\n");
 	}
 
 	bool EventLoop::prepareEarlyBodyLimitResponse(Client& client)
@@ -1080,9 +1081,24 @@ namespace webserv
 		const RouteResult& route,
 		const ServerConfig& server)
 	{
+		CgiNetworkInfo network;
+		struct sockaddr_in localAddress;
+		socklen_t localLength = sizeof(localAddress);
+
+		network.remoteAddr = client.remoteAddr();
+		std::memset(&localAddress, 0, sizeof(localAddress));
+		if (getsockname(client.fd(),
+				reinterpret_cast<struct sockaddr*>(&localAddress),
+				&localLength) == 0
+			&& localAddress.sin_family == AF_INET)
+		{
+			network.serverAddr = ipv4ToString(localAddress);
+			network.serverPort = numberToString(ntohs(localAddress.sin_port));
+		}
 		const CgiExecution execution = CgiHandler::start(
 			client.request(),
-			route);
+			route,
+			network);
 
 		if (!execution.ok)
 		{

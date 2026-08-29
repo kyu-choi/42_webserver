@@ -2,7 +2,6 @@
 #include "webserv/Http.hpp"
 #include "webserv/MimeTypes.hpp"
 #include "webserv/PathPolicy.hpp"
-#include <cerrno>
 #include <fcntl.h>
 #include <sstream>
 #include <sys/stat.h>
@@ -74,8 +73,6 @@ namespace webserv
 			}
 			if (bytesRead == 0)
 				break;
-			if (errno == EINTR)
-				continue;
 			close(fd);
 			body.clear();
 			return (false);

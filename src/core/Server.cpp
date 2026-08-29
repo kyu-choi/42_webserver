@@ -30,12 +30,14 @@ namespace
 
 	void setNonBlocking(int fd)
 	{
-		const int flags = fcntl(fd, F_GETFL, 0);
-
-		if (flags < 0)
-			throw std::runtime_error(systemError("fcntl(F_GETFL)"));
-		if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0)
+		if (fcntl(fd, F_SETFL, O_NONBLOCK) < 0)
 			throw std::runtime_error(systemError("fcntl(F_SETFL)"));
+	}
+
+	void setCloseOnExec(int fd)
+	{
+		if (fcntl(fd, F_SETFD, FD_CLOEXEC) < 0)
+			throw std::runtime_error(systemError("fcntl(F_SETFD)"));
 	}
 
 	in_addr_t addressForHost(const std::string& host)
@@ -210,6 +212,7 @@ namespace webserv
 		try
 		{
 			setNonBlocking(listenFd);
+			setCloseOnExec(listenFd);
 		}
 		catch (...)
 		{

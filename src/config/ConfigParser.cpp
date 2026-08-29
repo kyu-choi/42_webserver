@@ -150,8 +150,6 @@ namespace webserv
 			}
 			if (bytesRead == 0)
 				break;
-			if (errno == EINTR)
-				continue;
 			close(fd);
 			throw std::runtime_error("config: cannot read " + path);
 		}

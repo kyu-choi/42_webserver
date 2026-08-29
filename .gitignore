@@ -1,2 +1,6 @@
 build/
 /webserv
+__pycache__/
+.serena/
+patches/
+www/uploads/upload-*
