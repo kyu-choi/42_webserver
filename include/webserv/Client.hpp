@@ -33,6 +33,7 @@ namespace webserv
 		std::size_t	pendingOutputSize() const;
 		const char*	pendingOutputData() const;
 		void	setOutput(const std::string& response);
+		void	setOutputSwap(std::string& response);
 		void	setInterimOutput(const std::string& response);
 		void	clearOutput();
 		void	advanceSendOffset(std::size_t sentBytes);

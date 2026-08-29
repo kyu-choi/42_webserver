@@ -1,259 +1,99 @@
-*This project has been created as part of the 42 curriculum by kyu-choi*
+*This project has been created as part of the 42 curriculum by hyeonwki*
 
 # Webserv
 
-`webserv` is a lightweight HTTP server written in **C++98**.
-
-The goal of this project is to understand how a web server works internally by implementing the core parts of HTTP communication directly: socket creation, client connection handling, request parsing, response generation, static file serving, file upload, DELETE requests, CGI execution, configuration parsing, and non-blocking I/O.
-
-This project is inspired by the behavior and configuration style of NGINX, but it is implemented from scratch using only the functions allowed by the 42 subject.
-
----
-
-## Table of Contents
-
-- [Description](#description)
-- [Core Concepts](#core-concepts)
-- [Features](#features)
-- [Project Architecture](#project-architecture)
-- [Instructions](#instructions)
-- [Build](#build)
-- [Usage](#usage)
-- [Configuration File](#configuration-file)
-- [HTTP Request Handling Flow](#http-request-handling-flow)
-- [Supported Methods](#supported-methods)
-- [Status Codes](#status-codes)
-- [CGI](#cgi)
-- [Testing](#testing)
-- [Repository Structure](#repository-structure)
-- [Resources](#resources)
-- [AI Usage](#ai-usage)
-
----
-
 ## Description
 
-Webserv is an HTTP server that can communicate with a real web browser.
+Webserv is a small HTTP server written in C++98. The goal of the project is to
+understand how a web server works by implementing the core pieces directly:
+TCP sockets, HTTP request parsing, routing from a configuration file, static
+file delivery, uploads, DELETE requests, CGI execution, and non-blocking I/O.
 
-When a browser connects to the server, the server receives an HTTP request, parses it, matches the requested URI with the configuration file, performs the required action, builds an HTTP response, and sends it back to the client.
+The server is inspired by the structure of an NGINX `server` block, but it does
+not use NGINX or any external HTTP library. All request parsing, response
+generation, routing, and configuration parsing are implemented in the project.
 
-Basic request/response flow:
-
-```text
-Browser
-  -> TCP connection
-  -> HTTP request
-  -> webserv
-  -> request parsing
-  -> route matching
-  -> static file / upload / DELETE / CGI processing
-  -> HTTP response
-  -> Browser
-```
-
-The project focuses on understanding the following topics:
-
-- TCP socket programming
-- HTTP request and response structure
-- Non-blocking I/O
-- Event-driven server design
-- `poll`, `select`, `epoll`, or `kqueue`
-- Per-client buffer management
-- Configuration-based routing
-- Static file serving
-- File upload
-- CGI execution
-- Error handling and HTTP status codes
-
----
-
-## Core Concepts
-
-### HTTP
-
-HTTP is the protocol used by browsers and web servers to exchange data.
-
-Example HTTP request:
-
-```http
-GET /index.html HTTP/1.1
-Host: localhost:8080
-```
-
-Example HTTP response:
-
-```http
-HTTP/1.1 200 OK
-Content-Type: text/html
-Content-Length: 42
-
-<html><body>Hello Webserv</body></html>
-```
-
-### Socket
-
-A socket is a communication endpoint used by programs to exchange data over a network.
-
-A basic TCP server follows this flow:
+At runtime, the server:
 
 ```text
-socket()
-  -> bind()
-  -> listen()
-  -> accept()
-  -> recv/read()
-  -> send/write()
-  -> close()
+accepts TCP connections
+parses HTTP requests
+selects a server and location from the config file
+handles static files, upload, DELETE, redirects, directory listing, or CGI
+sends an HTTP response without blocking the whole server
 ```
-
-In this project, sockets must be handled in a non-blocking way.
-
-### Non-blocking Event Loop
-
-The server must not stop because of one slow client.
-
-Instead of blocking on `read()` or `write()`, the server uses an event monitoring function such as `poll()`.
-
-```text
-while (server is running)
-{
-    wait for events with poll/select/epoll/kqueue
-
-    if a listen socket is readable:
-        accept a new client
-
-    if a client socket is readable:
-        receive request data
-
-    if a client socket is writable:
-        send response data
-
-    if a CGI pipe is readable or writable:
-        process CGI data
-}
-```
-
----
 
 ## Features
 
-Mandatory features expected from this project:
-
 - C++98 implementation
-- HTTP server executable named `webserv`
+- Build target named `webserv`
 - Configuration file support
-- Multiple listening ports
-- Non-blocking I/O
-- One event loop for client/server I/O
-- Browser-compatible HTTP responses
-- Accurate HTTP status codes
-- Default error pages
+- Default configuration path when no argument is provided
+- Non-blocking sockets and CGI pipes
+- Single `poll()` driven event loop for listen sockets, clients, and CGI pipes
+- GET, POST, DELETE, and HEAD parsing
+- Accurate status codes for common error cases
+- Default error pages and configured custom error pages
 - Static website serving
-- GET method
-- POST method
-- DELETE method
-- File upload support
+- Directory index files
 - Directory listing when enabled
-- Redirection support
-- CGI execution based on file extension
-- Request body size limit
-- Custom error pages
-- Stress-test resistant behavior
-
-Optional bonus features:
-
-- Cookies and session management
-- Multiple CGI types
-
-Built-in demonstration endpoints (served by the event loop itself, independent of the configuration file):
-
-- `POST /echo` — echoes the request body back; used by the chunked-body test suites
-- `GET /session` — cookie-based session demo for the bonus part (visit counter with a `WSID` cookie)
-
-A Korean companion version of this document is available in [`README_KO.md`](README_KO.md).
-
----
-
-## Project Architecture
-
-A clean implementation can be separated into the following modules:
-
-```text
-webserv
-├── ConfigParser
-├── Server
-├── EventLoop
-├── Client
-├── HttpRequest
-├── RequestParser
-├── HttpResponse
-├── ResponseBuilder
-├── Router
-├── StaticFileHandler
-├── UploadHandler
-├── DeleteHandler
-├── CgiHandler
-├── ErrorPageHandler
-└── Utils
-```
-
-### Suggested Responsibilities
-
-
-| Module              | Responsibility                                                    |
-| ------------------- | ----------------------------------------------------------------- |
-| `ConfigParser`      | Parse the configuration file and build server/location settings   |
-| `Server`            | Create listen sockets and initialize server state                 |
-| `EventLoop`         | Monitor all sockets and pipes with `poll` or equivalent           |
-| `Client`            | Store client fd, request buffer, response buffer, and state       |
-| `RequestParser`     | Parse request line, headers, body, query string, and chunked body |
-| `ResponseBuilder`   | Build valid HTTP responses                                        |
-| `Router`            | Match URI with the most appropriate location block                |
-| `StaticFileHandler` | Serve HTML, CSS, JS, images, and other static files               |
-| `UploadHandler`     | Parse upload requests and store files                             |
-| `DeleteHandler`     | Delete files when DELETE is allowed                               |
-| `CgiHandler`        | Execute CGI scripts and collect their output                      |
-| `ErrorPageHandler`  | Generate default or configured error pages                        |
-
-
----
+- HTTP redirects
+- Request body size limits
+- File upload support
+- Safe DELETE handling
+- Path traversal protection
+- CGI execution by file extension
+- Decoded chunked request bodies before handler or CGI processing
+- Multiple listen ports serving different content
+- Cookie/session demo
+- Multiple CGI interpreter demo
 
 ## Instructions
 
-Build and start the demonstration configuration:
+Compile the project:
 
-```bash
+```sh
 make
+```
+
+Run with an explicit configuration file:
+
+```sh
 ./webserv config/default.conf
 ```
 
-The executable also uses `config/default.conf` when no argument is provided.
-The demonstration serves the main site on `127.0.0.1:8080` and a second site
-on `127.0.0.1:8081`.
+Run with the default configuration path:
 
-Run the automated integration and stress tests with:
-
-```bash
-./tests/integration.sh
+```sh
+./webserv
 ```
 
-The test suite covers static files, multiple ports, status codes, redirects,
-uploads, DELETE, autoindex, chunked requests, Python and PHP CGI, cookie
-sessions, and concurrent clients.
+Then open one of these URLs in a browser:
 
----
-
-## Build
-
-Compile the project with:
-
-```bash
-make
+```text
+http://127.0.0.1:8080/
 ```
 
-The Makefile must support at least:
+For the full demonstration configuration, including the second listen port:
 
-```bash
+```sh
+./webserv config/step20.conf
+```
+
+Then open:
+
+```text
+http://127.0.0.1:8080/
+http://127.0.0.1:8081/
+```
+
+Stop the server with `Ctrl-C`.
+
+## Makefile
+
+The Makefile provides the required rules:
+
+```sh
 make
 make all
 make clean
@@ -261,77 +101,17 @@ make fclean
 make re
 ```
 
-The project must compile with:
+The project is compiled with:
 
-```bash
+```sh
 c++ -Wall -Wextra -Werror -std=c++98
 ```
 
-External libraries and Boost are not allowed.
+No external libraries or Boost are used.
 
----
+## Configuration
 
-## Usage
-
-Run the server with a configuration file:
-
-```bash
-./webserv config/default.conf
-```
-
-If supported by the implementation, run with the default configuration:
-
-```bash
-./webserv
-```
-
-Then open a browser and visit:
-
-```text
-http://localhost:8080
-```
-
-You can also test with `curl`:
-
-```bash
-curl -v http://localhost:8080/
-```
-
-Or with `telnet`:
-
-```bash
-telnet localhost 8080
-```
-
-Example manual request:
-
-```http
-GET / HTTP/1.1
-Host: localhost:8080
-
-```
-
----
-
-## Configuration File
-
-The configuration file controls how the server behaves.
-
-It should be able to define:
-
-- Interface and port pairs
-- Server root directory
-- Default index file
-- Custom error pages
-- Maximum client request body size
-- Location-specific rules
-- Allowed HTTP methods
-- Redirections
-- Directory listing
-- Upload permissions and upload path
-- CGI extension and interpreter
-
-Example configuration:
+The configuration format is inspired by NGINX. A basic example:
 
 ```conf
 server {
@@ -341,450 +121,170 @@ server {
     client_max_body_size 10M;
 
     error_page 404 /errors/404.html;
-    error_page 500 /errors/500.html;
+    error_page 413 /errors/413.html;
 
     location / {
         methods GET;
         autoindex off;
-        index index.html;
     }
 
     location /upload {
         methods GET POST;
         upload on;
         upload_store ./www/uploads;
-        autoindex on;
     }
 
     location /delete {
-        root ./www/uploads;
         methods DELETE;
-    }
-
-    location /old {
-        return 301 /new;
+        root ./www/uploads;
     }
 
     location /cgi-bin {
-        root ./www/cgi-bin;
         methods GET POST;
+        root ./www/cgi-bin;
         cgi .py /usr/bin/python3;
     }
 }
 ```
 
-### Location Matching
+Supported directives include:
 
-When multiple locations match the same URI, the server should select the most specific one.
+- `listen`
+- `root`
+- `index`
+- `client_max_body_size`
+- `error_page`
+- `location`
+- `methods`
+- `return`
+- `autoindex`
+- `upload`
+- `upload_store`
+- `cgi`
 
-Example:
+## Demonstration Routes
 
-```text
-location /
-location /images
-location /images/icons
-```
+With `config/step20.conf`, the project demonstrates the mandatory and bonus
+features:
 
-Request:
-
-```text
-/images/icons/home.png
-```
-
-Selected location:
-
-```text
-/images/icons
-```
-
-This is called longest prefix matching.
-
----
-
-## HTTP Request Handling Flow
-
-A typical request is processed as follows:
-
-```text
-1. Browser connects to a listen socket.
-2. The listen fd becomes readable.
-3. The server accepts the new connection.
-4. The new client fd is set to non-blocking mode.
-5. The client fd is added to the event loop.
-6. The browser sends an HTTP request.
-7. The client fd becomes readable.
-8. The server reads data into the client's request buffer.
-9. The server checks whether the request is complete.
-10. The request is parsed.
-11. The matching server/location configuration is selected.
-12. The HTTP method is validated.
-13. Static file, upload, DELETE, redirect, or CGI logic is executed.
-14. An HTTP response is generated.
-15. The client fd becomes writable.
-16. The response is sent progressively.
-17. The connection is kept alive or closed depending on the request/response.
-```
-
----
-
-## Supported Methods
-
-### GET
-
-Used to request a resource.
-
-Example:
-
-```http
-GET /index.html HTTP/1.1
-Host: localhost:8080
-```
-
-Expected behavior:
-
-```text
-- Match the URI with a location
-- Build the real file path
-- Check if the file exists
-- Check access permissions
-- Serve the file with the correct Content-Type
-- If the path is a directory, serve index or autoindex
-```
-
-### POST
-
-Used to send data to the server.
-
-Common use cases:
-
-```text
-- HTML form submission
-- File upload
-- CGI input
-```
-
-Expected behavior:
-
-```text
-- Read the full request body
-- Check Content-Length or Transfer-Encoding
-- Enforce client_max_body_size
-- Process upload or pass body to CGI
-```
-
-### DELETE
-
-Used to delete a resource.
-
-Expected behavior:
-
-```text
-- Match the requested path
-- Check if DELETE is allowed
-- Check if the target exists
-- Check permissions
-- Delete the file
-- Return an accurate status code
-```
-
----
-
-## Status Codes
-
-The server should return accurate HTTP status codes.
-
-Common status codes:
-
-
-| Code | Meaning               | Typical Case                          |
-| ---- | --------------------- | ------------------------------------- |
-| 200  | OK                    | Successful GET or POST                |
-| 201  | Created               | File uploaded or resource created     |
-| 204  | No Content            | Successful DELETE with no body        |
-| 301  | Moved Permanently     | Permanent redirect                    |
-| 302  | Found                 | Temporary redirect                    |
-| 400  | Bad Request           | Invalid HTTP request                  |
-| 403  | Forbidden             | Access denied or autoindex disabled   |
-| 404  | Not Found             | Resource does not exist               |
-| 405  | Method Not Allowed    | Method is not allowed in the location |
-| 408  | Request Timeout       | Request took too long                 |
-| 413  | Payload Too Large     | Body exceeds configured limit         |
-| 414  | URI Too Long          | URI is too long                       |
-| 500  | Internal Server Error | Unexpected server-side error          |
-| 501  | Not Implemented       | Unsupported method or feature         |
-| 502  | Bad Gateway           | Invalid CGI response                  |
-| 504  | Gateway Timeout       | CGI timeout                           |
-
-
----
+- `/` serves the static website.
+- `/old` redirects to `/`.
+- `/listing/` shows directory listing.
+- `/private-directory/` returns an error when listing is disabled.
+- `/has-index/` serves a configured index file.
+- `/echo` echoes POST bodies and is useful for chunked-body tests.
+- `/upload` accepts file uploads.
+- `/delete/<file>` deletes uploaded files.
+- `/cgi-bin/hello.py` runs Python CGI.
+- `/cgi-bin/hello.sh` runs shell CGI.
+- `/session` demonstrates cookies and session storage.
+- Port `8081` serves a different site root.
 
 ## CGI
 
-CGI allows the server to execute an external program and use its output as the HTTP response.
+CGI programs are selected by file extension in the configuration file. The
+server creates pipes, forks only for CGI, connects the request body to the CGI
+stdin, reads the CGI stdout, and converts it into an HTTP response.
 
-Example:
-
-```text
-GET /cgi-bin/hello.py HTTP/1.1
-```
-
-Configuration example:
-
-```conf
-location /cgi-bin {
-    root ./www/cgi-bin;
-    methods GET POST;
-    cgi .py /usr/bin/python3;
-}
-```
-
-Basic CGI flow:
-
-```text
-1. Detect CGI request by file extension.
-2. Build the CGI file path.
-3. Prepare CGI environment variables.
-4. Create pipes for stdin and stdout.
-5. fork().
-6. In the child process:
-   - connect stdin/stdout with dup2()
-   - execute CGI with execve()
-7. In the parent process:
-   - write request body to CGI stdin
-   - read CGI stdout
-   - build the final HTTP response
-```
-
-Important CGI environment variables may include:
-
-```text
-REQUEST_METHOD
-SCRIPT_NAME
-SCRIPT_FILENAME
-QUERY_STRING
-CONTENT_LENGTH
-CONTENT_TYPE
-SERVER_PROTOCOL
-SERVER_NAME
-SERVER_PORT
-REMOTE_ADDR
-PATH_INFO
-GATEWAY_INTERFACE
-```
-
-For chunked requests, the server must unchunk the body before passing it to CGI.
-
----
+The CGI environment includes request method, URI, script path, query string,
+content headers, server information, remote address, and HTTP request headers.
+Chunked request bodies are decoded before being passed to CGI, and EOF marks the
+end of the CGI input body.
 
 ## Testing
 
-Recommended testing targets:
+Run the full local test suite:
 
-### Build Test
-
-```bash
-make re
+```sh
+./tests/integration.sh
 ```
 
-### Basic Browser Test
+Run the same suite without the valgrind smoke check:
 
-Open:
-
-```text
-http://localhost:8080
+```sh
+SKIP_VALGRIND=1 ./tests/integration.sh
 ```
 
-Check:
+Run the valgrind smoke test only:
 
-```text
-- index page loads
-- CSS loads
-- images load
-- JavaScript loads if present
+```sh
+python3 tests/valgrind_smoke.py
 ```
 
-### GET Test
+Useful manual checks:
 
-```bash
-curl -v http://localhost:8080/index.html
+```sh
+curl -i http://127.0.0.1:8080/
+curl -i http://127.0.0.1:8081/
+curl -i http://127.0.0.1:8080/no-such-file
+curl -i http://127.0.0.1:8080/old
+curl -i http://127.0.0.1:8080/listing/
+curl -i "http://127.0.0.1:8080/cgi-bin/hello.py?name=eval"
+curl --path-as-is -i http://127.0.0.1:8080/../../etc/passwd
 ```
 
-### 404 Test
+The repository also contains Python tests for:
 
-```bash
-curl -v http://localhost:8080/not_found
-```
+- configuration parsing
+- invalid configuration rejection
+- static routing
+- uploads and DELETE
+- malformed requests
+- chunked requests
+- slow clients and disconnects
+- non-blocking CGI behavior
+- concurrent stress requests
+- cookie/session bonus behavior
+- multiple CGI types
 
-### Method Not Allowed Test
-
-```bash
-curl -v -X DELETE http://localhost:8080/
-```
-
-### Upload Test
-
-```bash
-curl -v -F "file=@test.txt" http://localhost:8080/upload
-```
-
-### DELETE Test
-
-```bash
-curl -v -X DELETE http://localhost:8080/delete/test.txt
-```
-
-### Redirect Test
-
-```bash
-curl -v http://localhost:8080/old
-```
-
-### CGI GET Test
-
-```bash
-curl -v "http://localhost:8080/cgi-bin/hello.py?name=webserv"
-```
-
-### CGI POST Test
-
-```bash
-curl -v -X POST -d "name=webserv" http://localhost:8080/cgi-bin/hello.py
-```
-
-### Stress Test
-
-Use several clients or scripts to confirm that the server remains available and does not crash.
-
-Examples:
-
-```bash
-siege http://localhost:8080/
-```
-
-or a custom Python script that opens multiple connections.
-
----
-
-## Repository Structure
-
-A possible repository layout:
+## Project Structure
 
 ```text
 .
 ├── Makefile
-├── README.md
-├── config
-│   ├── default.conf
-│   └── test.conf
-├── include
-│   ├── ConfigParser.hpp
-│   ├── Server.hpp
-│   ├── EventLoop.hpp
-│   ├── Client.hpp
-│   ├── HttpRequest.hpp
-│   ├── HttpResponse.hpp
-│   ├── RequestParser.hpp
-│   ├── ResponseBuilder.hpp
-│   ├── Router.hpp
-│   ├── StaticFileHandler.hpp
-│   ├── UploadHandler.hpp
-│   ├── DeleteHandler.hpp
-│   ├── CgiHandler.hpp
-│   └── Utils.hpp
-├── src
-│   ├── main.cpp
-│   ├── config
-│   ├── server
-│   ├── http
-│   ├── handlers
-│   └── utils
-├── www
-│   ├── index.html
-│   ├── style.css
-│   ├── upload.html
-│   ├── errors
-│   │   ├── 404.html
-│   │   └── 500.html
-│   ├── uploads
-│   └── cgi-bin
-│       └── hello.py
-└── tests
-    ├── curl_tests.sh
-    └── stress_test.py
+├── config/
+├── include/webserv/
+├── src/
+│   ├── config/
+│   ├── core/
+│   ├── handlers/
+│   ├── http/
+│   └── utils/
+├── tests/
+└── www/
+    ├── cgi-bin/
+    ├── errors/
+    ├── uploads/
+    └── site_b/
 ```
 
-This structure is only a suggestion and may be changed depending on the implementation.
+Key modules:
 
----
+- `ConfigParser`: parses configuration files.
+- `Server`: creates non-blocking listen sockets.
+- `EventLoop`: runs the single `poll()` loop.
+- `RequestParser`: parses HTTP request lines, headers, and bodies.
+- `Router`: selects the effective server/location configuration.
+- `StaticFileHandler`: serves files, indexes, and autoindex pages.
+- `UploadHandler`: stores raw and multipart uploads.
+- `DeleteHandler`: deletes files safely.
+- `CgiHandler`: starts CGI processes and builds CGI responses.
+- `ResponseBuilder`: creates HTTP responses.
+- `PathPolicy`: normalizes URI paths and blocks traversal.
 
 ## Resources
 
-Useful references for this project:
+- RFC 9110: HTTP Semantics
+- RFC 9112: HTTP/1.1
+- MDN Web Docs: HTTP overview, methods, status codes, headers
+- Linux man pages: `socket`, `bind`, `listen`, `accept`, `poll`, `fcntl`,
+  `recv`, `send`, `pipe`, `fork`, `execve`, `waitpid`
+- NGINX documentation: server blocks, location matching, root, index, error
+  pages, client body size, and CGI-like upstream concepts
+- Python CGI documentation and general CGI environment variable references
 
-- RFC 1945 - Hypertext Transfer Protocol HTTP/1.0
-- RFC 2616 - Hypertext Transfer Protocol HTTP/1.1
-- RFC 3875 - The Common Gateway Interface
-- MDN Web Docs - HTTP
-- MDN Web Docs - HTTP request methods
-- MDN Web Docs - HTTP response status codes
-- NGINX documentation
-- Linux man pages:
-  - `socket`
-  - `bind`
-  - `listen`
-  - `accept`
-  - `poll`
-  - `select`
-  - `fcntl`
-  - `read`
-  - `write`
-  - `send`
-  - `recv`
-  - `fork`
-  - `execve`
-  - `pipe`
-  - `dup2`
-  - `waitpid`
-  - `stat`
-  - `opendir`
-  - `readdir`
-
----
-
-## AI Usage
-
-AI was used as a learning and documentation assistant during the preparation of this project.
-
-It was used for:
-
-- Clarifying HTTP request/response concepts
-- Summarizing the Webserv subject requirements
-- Organizing notes about socket programming and event-driven servers
-- Explaining NGINX-like configuration concepts
-- Drafting and reviewing the C++98 implementation structure
-- Generating initial implementation and test scaffolding
-- Debugging compilation and CGI integration issues
-- Suggesting and implementing testing scenarios
-
-All AI-generated explanations and suggestions must be reviewed, understood, tested, and adapted by the project author before being included in the final implementation.
-Every part of the implementation should be understood and explainable during peer evaluation.
-
----
-
-## Evaluation Notes
-
-During evaluation, be prepared to explain:
-
-- Why the server must be non-blocking
-- How `poll` or equivalent event monitoring is used
-- How client request buffers are managed
-- How partial reads and partial writes are handled
-- How request parsing works
-- How route matching works
-- How `Content-Length` is calculated
-- How file upload is processed
-- How CGI communicates with the server through pipes
-- How client disconnection is handled
-- How default and custom error pages are generated
-
-The server should remain operational even when receiving malformed requests, large bodies, disconnected clients, or invalid paths.
+AI was used as a learning and review assistant for this project. It helped with
+summarizing the subject, organizing notes about HTTP/NGINX/configuration files,
+building test checklists, improving README wording, and suggesting cases to
+verify manually. All implementation decisions, code changes, and final behavior
+were reviewed and tested by the project author.

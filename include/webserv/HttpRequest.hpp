@@ -29,6 +29,7 @@ namespace webserv
 		void	setVersion(const std::string& version);
 		void	addHeader(const std::string& name, const std::string& value);
 		void	setBody(const std::string& body);
+		void	swapBody(std::string& body);
 		void	setBodyFraming(BodyFraming framing);
 		void	setContentLength(std::size_t contentLength);
 		void	setErrorStatus(int status);

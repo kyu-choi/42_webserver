@@ -769,25 +769,27 @@ keep-alive가 깨짐
 
 Webserv에서 자주 필요한 status code는 다음과 같다.
 
-| Code | 의미 | 사용 상황 |
-|---:|---|---|
-| 200 | OK | GET 성공, 일반 POST 성공 |
-| 201 | Created | 업로드 또는 리소스 생성 성공 |
-| 204 | No Content | DELETE 성공 후 body 없음 |
-| 301 | Moved Permanently | 영구 리다이렉션 |
-| 302 | Found | 임시 리다이렉션 |
-| 400 | Bad Request | 요청 문법 오류 |
-| 403 | Forbidden | 권한 없음, autoindex off인 디렉토리 접근 |
-| 404 | Not Found | 파일 또는 route 없음 |
-| 405 | Method Not Allowed | route에서 허용하지 않은 method |
-| 408 | Request Timeout | 요청이 너무 오래 걸림 |
-| 413 | Payload Too Large | body 크기 제한 초과 |
-| 414 | URI Too Long | URI가 너무 김 |
-| 500 | Internal Server Error | 서버 내부 오류 |
-| 501 | Not Implemented | 지원하지 않는 method |
-| 502 | Bad Gateway | CGI가 잘못된 응답 또는 실패 |
-| 504 | Gateway Timeout | CGI timeout |
-|
+
+| Code | 의미                    | 사용 상황                         |
+| ---- | --------------------- | ----------------------------- |
+| 200  | OK                    | GET 성공, 일반 POST 성공            |
+| 201  | Created               | 업로드 또는 리소스 생성 성공              |
+| 204  | No Content            | DELETE 성공 후 body 없음           |
+| 301  | Moved Permanently     | 영구 리다이렉션                      |
+| 302  | Found                 | 임시 리다이렉션                      |
+| 400  | Bad Request           | 요청 문법 오류                      |
+| 403  | Forbidden             | 권한 없음, autoindex off인 디렉토리 접근 |
+| 404  | Not Found             | 파일 또는 route 없음                |
+| 405  | Method Not Allowed    | route에서 허용하지 않은 method        |
+| 408  | Request Timeout       | 요청이 너무 오래 걸림                  |
+| 413  | Payload Too Large     | body 크기 제한 초과                 |
+| 414  | URI Too Long          | URI가 너무 김                     |
+| 500  | Internal Server Error | 서버 내부 오류                      |
+| 501  | Not Implemented       | 지원하지 않는 method                |
+| 502  | Bad Gateway           | CGI가 잘못된 응답 또는 실패             |
+| 504  | Gateway Timeout       | CGI timeout                   |
+|      |                       |                               |
+
 
 ---
 
@@ -2293,6 +2295,7 @@ CGI execution, redirection, custom error pages, and non-blocking I/O.
 make
 ./webserv config/default.conf
 ```
+
 ```
 
 ---

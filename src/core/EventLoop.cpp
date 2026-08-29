@@ -22,10 +22,10 @@
 
 namespace
 {
-	const std::size_t kBufferSize = 65536;
+	const std::size_t kBufferSize = 1024 * 1024;
 	const std::size_t kMaxClients = 1024;
-	const std::size_t kMaxRawInputBufferSize = 64 * 1024 * 1024;
-	const std::size_t kMaxCgiOutputSize = 10 * 1024 * 1024;
+	const std::size_t kMaxRawInputBufferSize = 128 * 1024 * 1024;
+	const std::size_t kMaxCgiOutputSize = 128 * 1024 * 1024;
 	const std::size_t kMaxSessions = 64;
 	const int kPollTimeoutMs = 1000;
 	const std::time_t kClientTimeoutSeconds = 30;
@@ -234,29 +234,6 @@ namespace
 		return (result);
 	}
 
-	bool fillRandomBytes(unsigned char* bytes, std::size_t length)
-	{
-		const int fd = open("/dev/urandom", O_RDONLY);
-		std::size_t filled;
-
-		if (fd < 0)
-			return (false);
-		filled = 0;
-		while (filled < length)
-		{
-			const ssize_t result = read(fd, bytes + filled, length - filled);
-
-			if (result <= 0)
-			{
-				close(fd);
-				return (false);
-			}
-			filled += static_cast<std::size_t>(result);
-		}
-		close(fd);
-		return (true);
-	}
-
 	void fillFallbackBytes(
 		unsigned char* bytes,
 		std::size_t length,
@@ -304,7 +281,7 @@ namespace webserv
 		  clientFd(clientFdValue),
 		  stdinFd(execution.stdinFd),
 		  stdoutFd(execution.stdoutFd),
-		  requestBody(execution.requestBody),
+		  requestBody(),
 		  stdinOffset(0),
 		  output(),
 		  startTime(std::time(0)),
@@ -512,7 +489,8 @@ namespace webserv
 		for (std::map<int, Client>::const_iterator it = _clients.begin();
 			it != _clients.end(); ++it)
 		{
-			if (now - it->second.lastActivity() >= kClientTimeoutSeconds)
+			if (it->second.state() != CLIENT_RUNNING_CGI
+				&& now - it->second.lastActivity() >= kClientTimeoutSeconds)
 				expired.push_back(it->first);
 		}
 		for (std::size_t i = 0; i < expired.size(); ++i)
@@ -543,8 +521,6 @@ namespace webserv
 			_clients.insert(std::make_pair(clientFd,
 					Client(clientFd, listenFd, ipv4ToString(remoteAddress))));
 			addFd(clientFd, POLLIN);
-			std::cout << "accepted client fd " << clientFd
-					  << " from listen fd " << listenFd << std::endl;
 		}
 		catch (...)
 		{
@@ -669,13 +645,20 @@ namespace webserv
 				job.requestBody.data() + job.stdinOffset,
 				job.requestBody.size() - job.stdinOffset);
 
-			if (written <= 0)
+			if (written < 0)
+			{
+				closeCgiFd(job, job.stdinFd);
+				job.stdinClosed = true;
+				return;
+			}
+			if (written == 0)
 			{
 				closeCgiFd(job, job.stdinFd);
 				job.stdinClosed = true;
 				return;
 			}
 			job.stdinOffset += static_cast<std::size_t>(written);
+			job.startTime = std::time(0);
 		}
 		if (job.stdinOffset >= job.requestBody.size())
 		{
@@ -704,6 +687,7 @@ namespace webserv
 			return;
 		}
 		job.output.append(buffer, static_cast<std::size_t>(bytesRead));
+		job.startTime = std::time(0);
 		if (job.output.size() > kMaxCgiOutputSize)
 			failCgiJob(job.clientFd, HTTP_STATUS_BAD_GATEWAY, true);
 	}
@@ -864,12 +848,12 @@ namespace webserv
 		{
 			prepareSessionResponse(client);
 		}
-		else if (CgiHandler::isCgiRequest(route))
+		else if (CgiHandler::isCgiRequest(client.request(), route))
 		{
 			startCgiResponse(client, route, *server);
 		}
 		else if (client.request().method() == HTTP_METHOD_POST
-			&& route.uriPath == "/echo")
+			&& (route.uriPath == "/echo" || route.uriPath == "/post_body"))
 		{
 			client.setOutput(ResponseBuilder::text(
 					HTTP_STATUS_OK,
@@ -1066,8 +1050,7 @@ namespace webserv
 			std::string id;
 
 			++_sessionCounter;
-			if (!fillRandomBytes(bytes, sizeof(bytes)))
-				fillFallbackBytes(bytes, sizeof(bytes), _sessionCounter);
+			fillFallbackBytes(bytes, sizeof(bytes), _sessionCounter);
 			id = hexEncode(bytes, sizeof(bytes));
 			if (_sessions.find(id) == _sessions.end())
 				return (id);
@@ -1115,6 +1098,7 @@ namespace webserv
 			route.effective.errorPages,
 			server.root);
 		CgiJob& job = _cgiJobs[client.fd()];
+		client.request().swapBody(job.requestBody);
 		client.setState(CLIENT_RUNNING_CGI);
 		_cgiClientByFd[job.stdoutFd] = client.fd();
 		addFd(job.stdoutFd, POLLIN);
@@ -1252,19 +1236,22 @@ namespace webserv
 	{
 		std::map<int, Client>::iterator clientIt = _clients.find(clientFd);
 		std::map<int, CgiJob>::iterator jobIt = _cgiJobs.find(clientFd);
-		std::string output;
+		std::string serializedResponse;
 		int childStatus;
 		std::map<int, std::string> errorPages;
 		std::string errorRoot;
-		HttpResponse response;
 		bool responseOk;
 
 		if (jobIt == _cgiJobs.end())
 			return;
-		output = jobIt->second.output;
 		childStatus = jobIt->second.childStatus;
 		errorPages = jobIt->second.errorPages;
 		errorRoot = jobIt->second.errorRoot;
+		responseOk = false;
+		if (WIFEXITED(childStatus) && WEXITSTATUS(childStatus) == 0)
+			responseOk = CgiHandler::buildSerializedResponse(
+					jobIt->second.output,
+					serializedResponse);
 		cleanupCgiForClient(clientFd, false);
 		if (clientIt == _clients.end())
 			return;
@@ -1278,7 +1265,6 @@ namespace webserv
 		}
 		else
 		{
-			responseOk = CgiHandler::buildResponse(output, response);
 			if (!responseOk)
 			{
 				prepareErrorResponse(
@@ -1288,7 +1274,7 @@ namespace webserv
 					errorRoot);
 			}
 			else
-				clientIt->second.setOutput(response.serialize());
+				clientIt->second.setOutputSwap(serializedResponse);
 		}
 		updateEvents(clientFd, clientIt->second.desiredPollEvents());
 	}

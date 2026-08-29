@@ -6,6 +6,8 @@ namespace webserv
 	{
 		if (method == "GET")
 			return (HTTP_METHOD_GET);
+		if (method == "HEAD")
+			return (HTTP_METHOD_HEAD);
 		if (method == "POST")
 			return (HTTP_METHOD_POST);
 		if (method == "DELETE")
@@ -19,6 +21,8 @@ namespace webserv
 		{
 			case HTTP_METHOD_GET:
 				return ("GET");
+			case HTTP_METHOD_HEAD:
+				return ("HEAD");
 			case HTTP_METHOD_POST:
 				return ("POST");
 			case HTTP_METHOD_DELETE:
@@ -32,6 +36,7 @@ namespace webserv
 	bool isImplementedMethod(HttpMethod method)
 	{
 		return (method == HTTP_METHOD_GET
+			|| method == HTTP_METHOD_HEAD
 			|| method == HTTP_METHOD_POST
 			|| method == HTTP_METHOD_DELETE);
 	}

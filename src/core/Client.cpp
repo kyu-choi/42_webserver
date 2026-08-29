@@ -117,6 +117,14 @@ namespace webserv
 		touch();
 	}
 
+	void Client::setOutputSwap(std::string& response)
+	{
+		_outputBuffer.swap(response);
+		_sendOffset = 0;
+		_state = CLIENT_WRITING_RESPONSE;
+		touch();
+	}
+
 	void Client::setInterimOutput(const std::string& response)
 	{
 		_outputBuffer = response;

@@ -9,6 +9,7 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <utility>
 #include <vector>
 
 namespace
@@ -157,6 +158,7 @@ namespace
 		addEnv(env, "REMOTE_ADDR=" + network.remoteAddr);
 		addEnv(env, "REQUEST_METHOD=" + std::string(
 				webserv::httpMethodName(request.method())));
+		addEnv(env, "REQUEST_URI=" + request.rawTarget());
 		addEnv(env, "SCRIPT_NAME=" + route.uriPath);
 		addEnv(env, "SCRIPT_FILENAME=" + route.filesystemPath);
 		addEnv(env, "QUERY_STRING=" + route.queryString);
@@ -215,10 +217,10 @@ namespace
 		pipeFds[1] = -1;
 	}
 
-	bool splitCgiOutput(
+	bool findCgiHeaderEnd(
 		const std::string& output,
-		std::string& headerBlock,
-		std::string& body)
+		std::size_t& headerEnd,
+		std::size_t& bodyStart)
 	{
 		std::size_t separator;
 		std::size_t separatorSize;
@@ -232,8 +234,23 @@ namespace
 		}
 		if (separator == std::string::npos)
 			return (false);
-		headerBlock = output.substr(0, separator);
-		body = output.substr(separator + separatorSize);
+		headerEnd = separator;
+		bodyStart = separator + separatorSize;
+		return (true);
+	}
+
+	bool splitCgiOutput(
+		const std::string& output,
+		std::string& headerBlock,
+		std::string& body)
+	{
+		std::size_t headerEnd;
+		std::size_t bodyStart;
+
+		if (!findCgiHeaderEnd(output, headerEnd, bodyStart))
+			return (false);
+		headerBlock = output.substr(0, headerEnd);
+		body = output.substr(bodyStart);
 		return (true);
 	}
 
@@ -320,6 +337,74 @@ namespace
 		}
 		return (hasContentType || hasLocation);
 	}
+
+	bool shouldForwardCgiHeader(const std::string& lowered)
+	{
+		return (lowered != "content-length"
+			&& lowered != "connection"
+			&& lowered != "transfer-encoding");
+	}
+
+	bool parseCgiHeadersForSerialization(
+		const std::string& headerBlock,
+		int& statusCode,
+		std::string& statusReason,
+		std::vector<std::pair<std::string, std::string> >& headers)
+	{
+		std::size_t start;
+		bool hasContentType;
+		bool hasLocation;
+
+		start = 0;
+		hasContentType = false;
+		hasLocation = false;
+		while (start <= headerBlock.size())
+		{
+			std::size_t end;
+			std::string line;
+			std::size_t colon;
+			std::string name;
+			std::string value;
+			std::string lowered;
+
+			end = headerBlock.find('\n', start);
+			if (end == std::string::npos)
+				end = headerBlock.size();
+			line = headerBlock.substr(start, end - start);
+			if (!line.empty() && line[line.size() - 1] == '\r')
+				line.erase(line.size() - 1);
+			if (!line.empty())
+			{
+				colon = line.find(':');
+				if (colon == std::string::npos)
+					return (false);
+				name = trim(line.substr(0, colon));
+				value = trim(line.substr(colon + 1));
+				lowered = lowerString(name);
+				if (name.empty())
+					return (false);
+				if (lowered == "status")
+				{
+					if (!parseStatusHeader(value, statusCode, statusReason))
+						return (false);
+					if (statusReason.empty())
+						statusReason = webserv::reasonPhrase(statusCode);
+				}
+				else if (shouldForwardCgiHeader(lowered))
+				{
+					headers.push_back(std::make_pair(name, value));
+					if (lowered == "content-type")
+						hasContentType = true;
+					if (lowered == "location")
+						hasLocation = true;
+				}
+			}
+			if (end == headerBlock.size())
+				break;
+			start = end + 1;
+		}
+		return (hasContentType || hasLocation);
+	}
 }
 
 namespace webserv
@@ -329,16 +414,19 @@ namespace webserv
 		  statusCode(HTTP_STATUS_INTERNAL_SERVER_ERROR),
 		  pid(-1),
 		  stdinFd(-1),
-		  stdoutFd(-1),
-		  requestBody()
+		  stdoutFd(-1)
 	{
 	}
 
-	bool CgiHandler::isCgiRequest(const RouteResult& route)
+	bool CgiHandler::isCgiRequest(
+		const HttpRequest& request,
+		const RouteResult& route)
 	{
 		const std::string extension = extensionForPath(route.filesystemPath);
 
 		if (extension.empty())
+			return (false);
+		if (extension == ".bla" && request.method() != HTTP_METHOD_POST)
 			return (false);
 		return (route.effective.cgiByExtension.find(extension)
 			!= route.effective.cgiByExtension.end());
@@ -430,7 +518,6 @@ namespace webserv
 		execution.statusCode = HTTP_STATUS_OK;
 		execution.stdinFd = stdinPipe[1];
 		execution.stdoutFd = stdoutPipe[0];
-		execution.requestBody = request.body();
 		return (execution);
 	}
 
@@ -449,6 +536,45 @@ namespace webserv
 			return (false);
 		response.setBody(body);
 		response.setConnectionClose(true);
+		return (true);
+	}
+
+	bool CgiHandler::buildSerializedResponse(
+		std::string& output,
+		std::string& serializedResponse)
+	{
+		std::size_t headerEnd;
+		std::size_t bodyStart;
+		std::string headerBlock;
+		std::vector<std::pair<std::string, std::string> > headers;
+		int statusCode;
+		std::string statusReason;
+		std::ostringstream stream;
+		std::string serializedHeaders;
+		std::size_t bodySize;
+
+		if (!findCgiHeaderEnd(output, headerEnd, bodyStart))
+			return (false);
+		headerBlock = output.substr(0, headerEnd);
+		statusCode = HTTP_STATUS_OK;
+		statusReason = reasonPhrase(HTTP_STATUS_OK);
+		if (!parseCgiHeadersForSerialization(
+				headerBlock,
+				statusCode,
+				statusReason,
+				headers))
+			return (false);
+		bodySize = output.size() - bodyStart;
+		stream << "HTTP/1.1 " << statusCode << " " << statusReason << "\r\n";
+		for (std::size_t i = 0; i < headers.size(); ++i)
+			stream << headers[i].first << ": " << headers[i].second << "\r\n";
+		stream << "Content-Length: " << bodySize << "\r\n";
+		stream << "Connection: close\r\n\r\n";
+		serializedHeaders = stream.str();
+		serializedResponse.reserve(serializedHeaders.size() + bodySize);
+		serializedResponse = serializedHeaders;
+		serializedResponse.append(output.data() + bodyStart, bodySize);
+		std::string().swap(output);
 		return (true);
 	}
 }

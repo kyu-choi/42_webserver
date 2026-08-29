@@ -82,6 +82,11 @@ namespace webserv
 		_body = body;
 	}
 
+	void HttpRequest::swapBody(std::string& body)
+	{
+		_body.swap(body);
+	}
+
 	void HttpRequest::setBodyFraming(BodyFraming framing)
 	{
 		_bodyFraming = framing;

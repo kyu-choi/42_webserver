@@ -16,7 +16,6 @@ namespace webserv
 		pid_t		pid;
 		int			stdinFd;
 		int			stdoutFd;
-		std::string	requestBody;
 
 		CgiExecution();
 	};
@@ -31,7 +30,9 @@ namespace webserv
 	class CgiHandler
 	{
 	public:
-		static bool			isCgiRequest(const RouteResult& route);
+		static bool			isCgiRequest(
+								const HttpRequest& request,
+								const RouteResult& route);
 		static CgiExecution	start(
 								const HttpRequest& request,
 								const RouteResult& route,
@@ -39,6 +40,9 @@ namespace webserv
 		static bool			buildResponse(
 								const std::string& output,
 								HttpResponse& response);
+		static bool			buildSerializedResponse(
+								std::string& output,
+								std::string& serializedResponse);
 
 	private:
 		CgiHandler();
